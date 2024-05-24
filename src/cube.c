@@ -12,10 +12,10 @@ struct cube {
     FaceColor *squares;
 };
 
-#define DCHECK(cond, msg, ...)                                                 \
+#define DCHECK(cond, ...)                                                      \
     do {                                                                       \
         if (!(cond)) {                                                         \
-            fprintf(stderr, msg, __VA_ARGS__);                                 \
+            fprintf(stderr, __VA_ARGS__);                                      \
             exit(EXIT_FAILURE);                                                \
         }                                                                      \
     } while (0)
@@ -157,28 +157,90 @@ void set_orientation(Cube *cube, int orientation) {
     cube->orientation = orientation;
 }
 
-void print_cube(Cube *cube) {
-    uint32_t sides = cube->sides;
-    uint32_t colors_per_side = sides * sides;
-    for (FaceColor col = 0; col < FC_Count; ++col) {
-        FaceColor *face = cube->squares + (col * colors_per_side);
+static inline void write_face_to_buf(FaceColor *face, char *buf,
+                                     uint32_t stride, uint32_t sides,
+                                     int orientation) {
+    char fc_name[FC_Count] = {
+        [FC_White] = 'W',  //
+        [FC_Green] = 'G',  //
+        [FC_Red] = 'R',    //
+        [FC_Blue] = 'B',   //
+        [FC_Orange] = 'O', //
+        [FC_Yellow] = 'Y', //
+    };
 
-        if (col != 0) {
-            printf("\n");
-        }
-
-        for (uint32_t r = 0; r < sides; ++r) {
-            for (uint32_t c = 0; c < sides; ++c) {
-                FaceColor fc = face[(sides * r) + c];
-                if (c == 0) {
-                    printf("%d", fc);
-                } else {
-                    printf(" %d", fc);
-                }
-            }
-            printf("\n");
+    for (uint32_t r = 0; r < sides; ++r) {
+        for (uint32_t c = 0; c < sides; ++c) {
+            FaceColor fc = get_at_rc(face, sides, r, c, orientation);
+            buf[(r * stride) + c] = fc_name[fc];
         }
     }
+}
+
+void print_cube(Cube *cube) {
+    /*
+     * Print the cube in the shape of the net, like below
+     *  . . . . * * * . . . . . . . .
+     *  . . . . * W * . . . . . . . .
+     *  . . . . * * * . . . . . . . .
+     *  . . . . . . . . . . . . . . .
+     *  * * * . * * * . * * * . * * *
+     *  * G * . * R * . * B * . * O *
+     *  * * * . * * * . * * * . * * *
+     *  . . . . . . . . . . . . . . .
+     *  . . . . * * * . . . . . . . .
+     *  . . . . * Y * . . . . . . . .
+     *  . . . . * * * . . . . . . . .
+     */
+
+    uint32_t sides = cube->sides;
+    uint32_t colors_per_side = sides * sides;
+
+    uint32_t stride = (4 * sides + 3) + 1; // +1 to account for newline
+    uint32_t height = (3 * sides + 2);
+    uint32_t string_buf_size = stride * height;
+
+    uint32_t starts[FC_Count] = {
+        [FC_White] = 0 * (sides + 1) * stride + 1 * (sides + 1),
+        [FC_Green] = 1 * (sides + 1) * stride + 0 * (sides + 1),
+        [FC_Red] = 1 * (sides + 1) * stride + 1 * (sides + 1),
+        [FC_Blue] = 1 * (sides + 1) * stride + 2 * (sides + 1),
+        [FC_Orange] = 1 * (sides + 1) * stride + 3 * (sides + 1),
+        [FC_Yellow] = 2 * (sides + 1) * stride + 1 * (sides + 1),
+    };
+
+    int print_dir[FC_Count] = {
+        [FC_White] = 2,  //
+        [FC_Green] = 0,  //
+        [FC_Red] = 3,    //
+        [FC_Blue] = 2,   //
+        [FC_Orange] = 3, //
+        [FC_Yellow] = 2, //
+    };
+
+    // TODO: make this allocation persist and grow when necessary so there isn't
+    // a malloc and free on every call. just when the buffer needs to grow.
+
+    char *buf = (char *)malloc(string_buf_size + 1); // +1 for null terminator
+    DCHECK(buf != NULL,
+           "Could not allocate buffer storage for printing the cube\n");
+
+    memset(buf, ' ', string_buf_size);
+    for (uint32_t i = 0; i < height; ++i) {
+        buf[(stride * (i + 1)) - 1] = '\n';
+    }
+    buf[string_buf_size] = '\0';
+
+    for (FaceColor fc = 0; fc < FC_Count; ++fc) {
+        FaceColor *face = cube->squares + (colors_per_side * fc);
+        char *buf_start = buf + starts[fc];
+        int dir = print_dir[fc];
+        write_face_to_buf(face, buf_start, stride, sides, dir);
+    }
+
+    printf("%s", buf);
+
+    free(buf);
 }
 
 static inline FaceColor get_at_rc(FaceColor *colors, uint32_t sides,
