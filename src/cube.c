@@ -77,31 +77,33 @@ void rotate_front(Cube *cube, uint32_t depth, int clockwise) {
     uint32_t colors_per_side = sides * sides;
 
     // rotate the squares on the front
-    FaceColor *face = cube->squares + (cube->facing_side * colors_per_side);
-    for (uint32_t d = 0; d < sides / 2; ++d) {
-        for (uint32_t c = d; c < (sides - 1) - d; ++c) {
-            FaceColor ul = get_at_rc(face, sides, d, c, 0);
-            FaceColor ur = get_at_rc(face, sides, d, c, 1);
-            FaceColor br = get_at_rc(face, sides, d, c, 2);
-            FaceColor bl = get_at_rc(face, sides, d, c, 3);
+    if (depth == 0) {
+        FaceColor *face = cube->squares + (cube->facing_side * colors_per_side);
+        for (uint32_t d = 0; d < sides / 2; ++d) {
+            for (uint32_t c = d; c < (sides - 1) - d; ++c) {
+                FaceColor ul = get_at_rc(face, sides, d, c, 0);
+                FaceColor ur = get_at_rc(face, sides, d, c, 1);
+                FaceColor br = get_at_rc(face, sides, d, c, 2);
+                FaceColor bl = get_at_rc(face, sides, d, c, 3);
 
-            FaceColor tmp = ul;
-            if (clockwise) {
-                ul = bl;
-                bl = br;
-                br = ur;
-                ur = tmp;
-            } else {
-                ul = ur;
-                ur = br;
-                br = bl;
-                bl = tmp;
+                FaceColor tmp = ul;
+                if (clockwise) {
+                    ul = bl;
+                    bl = br;
+                    br = ur;
+                    ur = tmp;
+                } else {
+                    ul = ur;
+                    ur = br;
+                    br = bl;
+                    bl = tmp;
+                }
+
+                set_at_rc(face, sides, d, c, 0, ul);
+                set_at_rc(face, sides, d, c, 1, ur);
+                set_at_rc(face, sides, d, c, 2, br);
+                set_at_rc(face, sides, d, c, 3, bl);
             }
-
-            set_at_rc(face, sides, d, c, 0, ul);
-            set_at_rc(face, sides, d, c, 1, ur);
-            set_at_rc(face, sides, d, c, 2, br);
-            set_at_rc(face, sides, d, c, 3, bl);
         }
     }
 
