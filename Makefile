@@ -19,10 +19,10 @@ all: $(TARGET)
 $(TARGET): $(OBJS)
 	$(CC) -o $@ $^
 
-$(BUILD)/%.o: $(SRC)/%.c | build-dir
+$(BUILD)/%.o: $(SRC)/%.c | $(BUILD)
 	$(CC) $(CFLAGS) $(foreach D,$(INCLUDE),-I$(D)) -c -o $@ $<
 
-build-dir:
+$(BUILD):
 	mkdir -p $(BUILD)
 
 clean:
