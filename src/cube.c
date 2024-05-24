@@ -30,6 +30,10 @@ static inline void set_at_rc(FaceColor *colors, uint32_t sides, uint32_t row,
                              uint32_t col, int dir, FaceColor fc);
 
 Cube *new_cube(uint32_t sides) {
+    if (sides < 1) {
+        return NULL;
+    }
+
     Cube *res = NULL;
 
     res = (Cube *)malloc(sizeof(Cube));
