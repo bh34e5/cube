@@ -1,7 +1,8 @@
+#include "tests.h"
+
 #include <stdio.h>
 
 #include "cube.h"
-#include "tests.h"
 
 void test_1(void) {
     Cube *cube = new_cube(3);

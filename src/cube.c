@@ -1,9 +1,11 @@
+#include "cube.h"
+
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "cube.h"
+#include "common.h"
 
 struct cube {
     uint32_t sides;
@@ -11,16 +13,6 @@ struct cube {
     FaceColor facing_side;
     FaceColor *squares;
 };
-
-#define DCHECK(cond, ...)                                                      \
-    do {                                                                       \
-        if (!(cond)) {                                                         \
-            fprintf(stderr, __VA_ARGS__);                                      \
-            exit(EXIT_FAILURE);                                                \
-        }                                                                      \
-    } while (0)
-
-#define NOT_IMPLEMENTED assert(!"Not implemented")
 
 static void initialize_cube(Cube *cube);
 static uint32_t get_face_in_dir(Cube *cube, int dir, int *from_dir);

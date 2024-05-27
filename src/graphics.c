@@ -1,16 +1,75 @@
+#include "graphics.h"
+
 #include <stdio.h>
 
-#include "graphics.h"
+#include "common.h"
+#include "my_math.h"
 
 static void loop(Application *app);
 static void update(Application *app, double delta_time);
 static void draw(Application *app);
+
+static void get_point_projections(Camera camera, V3 const *vertices,
+                                  SDL_Vertex *projections, uint32_t count);
+
+static int r = 0;
+static int g = 0;
+static int b = 0;
+
+static double x = 0.0;
+static double y = 0.0;
+
+static int xdir = 0;
+static int ydir = 0;
+
+static double target_mspf = 1000.0 / 60.0;
 
 #define CLEANUP(n)                                                             \
     do {                                                                       \
         ret = (n);                                                             \
         goto cleanup;                                                          \
     } while (0)
+
+/**
+ * The broad idea I have for this:
+ *
+ * I have a cube with side length 2 placed centered at the origin. Then I have a
+ * camera that is placed at a distance R from the origin. This R value can be
+ * changed using some keys, but must be at least Sqrt(3) (I think) away so that
+ * it doesn't move inside the cube.
+ *
+ * The camera can also change its phi and its psi angles so that it is free to
+ * move around horizontally and vertically.
+ *
+ * To render, what I need to do is find the _projected_ locations of each of the
+ * cube's 8 corners. The projection will be onto some plane orthogonal to the
+ * ray cast from the camera to the origin. And this plane should remain a fixed
+ * distance from the camera (I think).
+ *
+ * Once I have these projected locations, I should calculated the convex hull of
+ * the 8 points and fill that with some color. Once I have that, I will need to
+ * paint the other colors on top of that surface, but I'll worry about that a
+ * bit later. I just want to make sure that I can see a reasonable convex hull
+ * first.
+ *
+ * I can try to lookup the algorithm for calculating the convex hull, but I want
+ * to try to take a stab at it myself first. I vaguely remember something, and
+ * the way that it works is:
+ *
+ * 1. sort the points by the x coordinate. Find the point(s) with the largest x
+ * coordinate and take the one with the largest y. That point is on the
+ * boundary.
+ *
+ * 2. Take the vertical line that runs through that point and pivot it around
+ * the point in a counter-clockwise manner until intersecting with another
+ * point. That point is on the boundary.
+ *
+ * 3. From this new point, and the starting slope the same, continue rotating
+ * the line counter-clockwise until hitting another point.
+ *
+ * 4. Continue this until you end up back at the first point. These points that
+ * were found are all the points that make up the boundary of the hull.
+ */
 
 int graphics_main(void) {
     int ret = 0;
@@ -41,7 +100,12 @@ int graphics_main(void) {
 
     app = (Application){.window = window,
                         .window_renderer = window_renderer,
-                        .last_ticks = SDL_GetTicks()};
+                        .last_ticks = SDL_GetTicks(),
+                        .camera = {
+                            .rho = 10.0,
+                            .theta = 0.0,
+                            .phi = PI / 2.0,
+                        }};
 
     loop(&app);
 
@@ -57,18 +121,6 @@ cleanup:
 
     return ret;
 }
-
-static int r = 0;
-static int g = 0;
-static int b = 0;
-
-static double x = 0.0;
-static double y = 0.0;
-
-static int xdir = 0;
-static int ydir = 0;
-
-static double target_mspf = 1000.0 / 60.0;
 
 static void loop(Application *app) {
     int should_not_close = 1;
@@ -133,19 +185,99 @@ static void update(Application *app, double delta_time) {
     y += ydir * delta_time * 500.0;
 }
 
+#define RED                                                                    \
+    { .r = 0xFF, .g = 0, .b = 0, .a = 0xFF }
+static SDL_Vertex vertices[] = {
+    {{.x = 50, .y = 50}, RED, {0}}, //
+    {{.x = 40, .y = 60}, RED, {0}}, //
+    {{.x = 50, .y = 70}, RED, {0}}, //
+    {{.x = 60, .y = 70}, RED, {0}}, //
+    {{.x = 70, .y = 60}, RED, {0}}, //
+    {{.x = 60, .y = 50}, RED, {0}}, //
+};
+static int vertex_count = ARR_SIZE(vertices);
+
+static int indices[] = {
+    0, 1, 2, //
+    0, 2, 5, //
+    2, 3, 5, //
+    5, 3, 4, //
+};
+static int index_count = ARR_SIZE(indices);
+
 static void draw(Application *app) {
     Uint8 r_, g_, b_, a_;
     SDL_Rect rect = {.x = (int)x, .y = (int)y, .w = 50, .h = 50};
+
+    SDL_Vertex projected_verts[ARR_SIZE(cube_vertices)] = {0};
+    SDL_Point projected_points[ARR_SIZE(cube_vertices)] = {0};
+
+    get_point_projections(app->camera, cube_vertices, projected_verts,
+                          cube_vert_count);
+
+    for (int i = 0; i < vertex_count; ++i) {
+        double x = projected_verts[i].position.x;
+        double y = projected_verts[i].position.y;
+        printf("[%d] %f\t%f\n", i, x, y);
+        projected_points[i] = (SDL_Point){
+            .x = x,
+            .y = y,
+        };
+    }
+    printf("\n");
 
     SDL_RenderClear(app->window_renderer);
 
     SDL_GetRenderDrawColor(app->window_renderer, &r_, &g_, &b_, &a_);
     SDL_SetRenderDrawColor(app->window_renderer, r, g, b, 0xFF);
     SDL_RenderFillRect(app->window_renderer, &rect);
+
+    SDL_RenderDrawPoints(app->window_renderer, projected_points, vertex_count);
+
     SDL_SetRenderDrawColor(app->window_renderer, r_, g_, b_, a_);
+
+    SDL_RenderGeometry(app->window_renderer, NULL, vertices, vertex_count,
+                       indices, index_count);
 
     // SDL_Texture *texture = NULL;
     // SDL_RenderCopy(app->window_renderer, texture, NULL, NULL);
 
     SDL_RenderPresent(app->window_renderer);
+}
+
+static void get_point_projections(Camera camera, V3 const *vertices,
+                                  SDL_Vertex *projections, uint32_t count) {
+    double similarity_ratio = CAMERA_SCREEN_DIST / camera.rho;
+    V3 camera_pos = {
+        .rho = camera.rho, .theta = camera.theta, .phi = camera.phi};
+    V3 cube_center = scale(polar_to_rectangular(camera_pos), -1.0);
+
+    V3 camera_perp = {
+        .rho = camera.rho,
+        .theta = camera.theta + PI,
+        .phi = (PI / 2.0) - camera.phi,
+    };
+    V3 y_axis = polar_to_rectangular(camera_perp);
+    V3 y_dir = as_unit(y_axis);
+
+    for (int i = 0; i < count; ++i) {
+        V3 corner_pos = add(cube_center, vertices[i]);
+        V3 corner_dir = as_unit(corner_pos);
+        V3 perp = {0};
+        double x_component, y_component;
+        V3 diff_in_x, diff_in_y;
+
+        decompose(vertices[0], corner_dir, &perp);
+        perp = scale(as_unit(perp), similarity_ratio);
+
+        diff_in_y = decompose(perp, y_dir, &diff_in_x);
+        x_component = sqrt(length_sq(diff_in_x));
+        y_component = sqrt(length_sq(diff_in_y));
+
+        projections[i] = (SDL_Vertex){0};
+        projections[i].position = (SDL_FPoint){
+            .x = x_component,
+            .y = y_component,
+        };
+    }
 }
