@@ -6,23 +6,18 @@
 #include "my_math.h"
 
 static void loop(Application *app);
-static void update(Application *app, double delta_time);
+static void update(Application *app, StateUpdate s_update, double delta_time);
 static void draw(Application *app);
 
 static void get_point_projections(Camera camera, V3 const *vertices,
                                   SDL_Vertex *projections, uint32_t count);
 
-static int r = 0;
-static int g = 0;
-static int b = 0;
-
-static double x = 0.0;
-static double y = 0.0;
-
-static int xdir = 0;
-static int ydir = 0;
+static int r = 0xFF;
+static int g = 0xFF;
+static int b = 0xFF;
 
 static double target_mspf = 1000.0 / 60.0;
+static int print_a_thing = 0;
 
 #define CLEANUP(n)                                                             \
     do {                                                                       \
@@ -71,6 +66,19 @@ static double target_mspf = 1000.0 / 60.0;
  * were found are all the points that make up the boundary of the hull.
  */
 
+static State get_initial_state(void) {
+    Camera initial_camera = {
+        .rho = 10.0,
+        .theta = 0.0,
+        .phi = PI / 2,
+    };
+
+    return (State){.x = 0.0,
+                   .y = 0.0,
+
+                   .camera = initial_camera};
+}
+
 int graphics_main(void) {
     int ret = 0;
     Application app = {0};
@@ -101,11 +109,8 @@ int graphics_main(void) {
     app = (Application){.window = window,
                         .window_renderer = window_renderer,
                         .last_ticks = SDL_GetTicks(),
-                        .camera = {
-                            .rho = 10.0,
-                            .theta = 0.0,
-                            .phi = PI / 2.0,
-                        }};
+
+                        .state = get_initial_state()};
 
     loop(&app);
 
@@ -127,10 +132,10 @@ static void loop(Application *app) {
     while (should_not_close) {
         SDL_Event event;
         Uint32 last_ticks, ticks;
+        StateUpdate s_update = {0};
         double cur_delta_ms;
 
-        xdir = 0;
-        ydir = 0;
+        print_a_thing = 0;
         while (SDL_PollEvent(&event) > 0) {
             switch (event.type) {
             case SDL_QUIT: {
@@ -138,6 +143,7 @@ static void loop(Application *app) {
             } break;
             case SDL_KEYDOWN: {
                 Uint8 const *keys = SDL_GetKeyboardState(NULL);
+                // change the color of the rectangle
                 if (keys[SDL_SCANCODE_R] == 1) {
                     r = 0xFF - r;
                 } else if (keys[SDL_SCANCODE_G] == 1) {
@@ -146,16 +152,45 @@ static void loop(Application *app) {
                     b = 0xFF - b;
                 }
 
+                // move the rectangle up and down
                 if (keys[SDL_SCANCODE_W] == 1) {
-                    ydir = -1;
+                    s_update.ydir = -1;
                 } else if (keys[SDL_SCANCODE_S] == 1) {
-                    ydir = 1;
+                    s_update.ydir = 1;
                 }
 
+                // move the rectangle left and right
                 if (keys[SDL_SCANCODE_A] == 1) {
-                    xdir = -1;
+                    s_update.xdir = -1;
                 } else if (keys[SDL_SCANCODE_D] == 1) {
-                    xdir = 1;
+                    s_update.xdir = 1;
+                }
+
+                // zoom in/out on the cube
+                if (keys[SDL_SCANCODE_I] == 1) {
+                    s_update.camera_rho_dir = -1;
+                    print_a_thing = 1;
+                } else if (keys[SDL_SCANCODE_O] == 1) {
+                    s_update.camera_rho_dir = 1;
+                    print_a_thing = 1;
+                }
+
+                // move the camera up and down
+                if (keys[SDL_SCANCODE_DOWN] == 1) {
+                    s_update.camera_phi_dir = -1;
+                    print_a_thing = 1;
+                } else if (keys[SDL_SCANCODE_UP] == 1) {
+                    s_update.camera_phi_dir = 1;
+                    print_a_thing = 1;
+                }
+
+                // move the camera left and right
+                if (keys[SDL_SCANCODE_LEFT] == 1) {
+                    s_update.camera_theta_dir = -1;
+                    print_a_thing = 1;
+                } else if (keys[SDL_SCANCODE_RIGHT] == 1) {
+                    s_update.camera_theta_dir = 1;
+                    print_a_thing = 1;
                 }
             } break;
             }
@@ -173,20 +208,49 @@ static void loop(Application *app) {
             cur_delta_ms += diff;
         }
 
-        update(app, cur_delta_ms / 1000.0);
+        update(app, s_update, cur_delta_ms / 1000.0);
         draw(app);
 
         app->last_ticks = ticks;
     }
 }
 
-static void update(Application *app, double delta_time) {
-    x += xdir * delta_time * 500.0;
-    y += ydir * delta_time * 500.0;
+#define RECT_PIXELS_PER_SEC 500.0
+#define RHO_PIXELS_PER_SEC 1.0
+#define THETA_PIXELS_PER_SEC (2 * PI / 10)
+#define PHI_PIXELS_PER_SEC (PI / 10.0)
+
+#define DANGEROUS_MAX(a, b) ((a) > (b) ? (a) : (b))
+#define DANGEROUS_MIN(a, b) ((a) < (b) ? (a) : (b))
+
+#define DANGEROUS_CLAMP(min, n, max) (DANGEROUS_MIN(max, DANGEROUS_MAX(min, n)))
+
+double my_dmod(double arg, double modulus) {
+    return arg - (modulus * (arg / modulus));
 }
 
-#define RED                                                                    \
-    { .r = 0xFF, .g = 0, .b = 0, .a = 0xFF }
+static void update(Application *app, StateUpdate s_update, double delta_time) {
+    State *state = &app->state;
+    double new_rho, new_theta, new_phi;
+
+    state->x += s_update.xdir * delta_time * RECT_PIXELS_PER_SEC;
+    state->y += s_update.ydir * delta_time * RECT_PIXELS_PER_SEC;
+
+    new_rho = state->camera.rho +
+              s_update.camera_rho_dir * delta_time * RHO_PIXELS_PER_SEC;
+    new_theta = state->camera.theta +
+                s_update.camera_theta_dir * delta_time * THETA_PIXELS_PER_SEC;
+    new_phi = state->camera.phi +
+              s_update.camera_phi_dir * delta_time * PHI_PIXELS_PER_SEC;
+
+    // For now, these numbers are made up... they should be adjusted later
+    state->camera.rho = DANGEROUS_CLAMP(10.0, new_rho, 1000.0);
+    // state->camera.theta = my_dmod(new_theta, 2 * PI);
+    state->camera.theta = new_theta;
+    state->camera.phi = DANGEROUS_CLAMP(0.0, new_phi, PI);
+}
+
+#define RED {.r = 0xFF, .g = 0, .b = 0, .a = 0xFF}
 static SDL_Vertex vertices[] = {
     {{.x = 50, .y = 50}, RED, {0}}, //
     {{.x = 40, .y = 60}, RED, {0}}, //
@@ -206,25 +270,41 @@ static int indices[] = {
 static int index_count = ARR_SIZE(indices);
 
 static void draw(Application *app) {
+    State *state = &app->state;
     Uint8 r_, g_, b_, a_;
-    SDL_Rect rect = {.x = (int)x, .y = (int)y, .w = 50, .h = 50};
+    SDL_Rect rect = {.x = (int)state->x, .y = (int)state->y, .w = 50, .h = 50};
 
     SDL_Vertex projected_verts[ARR_SIZE(cube_vertices)] = {0};
     SDL_Point projected_points[ARR_SIZE(cube_vertices)] = {0};
 
-    get_point_projections(app->camera, cube_vertices, projected_verts,
+    get_point_projections(state->camera, cube_vertices, projected_verts,
                           cube_vert_count);
 
+    if (print_a_thing) {
+        Camera *camera = &state->camera;
+        printf("camera = {\n"
+               "    .rho = %f\n"
+               "    .theta = %f\n"
+               "    .phi = %f\n"
+               "}\n",
+               camera->rho, camera->theta, camera->phi);
+    }
     for (int i = 0; i < vertex_count; ++i) {
         double x = projected_verts[i].position.x;
         double y = projected_verts[i].position.y;
-        printf("[%d] %f\t%f\n", i, x, y);
+
+        if (print_a_thing) {
+            printf("[%d] %f\t%f\n", i, x, y);
+        }
+
         projected_points[i] = (SDL_Point){
-            .x = x,
-            .y = y,
+            .x = 500 * x + 680 / 4,
+            .y = 500 * y + 480 / 4,
         };
     }
-    printf("\n");
+    if (print_a_thing) {
+        printf("\n");
+    }
 
     SDL_RenderClear(app->window_renderer);
 
