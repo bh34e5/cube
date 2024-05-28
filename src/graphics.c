@@ -327,11 +327,17 @@ static void draw(Application *app) {
 
 static void get_point_projections(Camera camera, V3 const *vertices,
                                   SDL_Vertex *projections, uint32_t count) {
-    double similarity_ratio = CAMERA_SCREEN_DIST / camera.rho;
+    // double similarity_ratio = CAMERA_SCREEN_DIST / camera.rho;
     V3 camera_pos = {
         .rho = camera.rho, .theta = camera.theta, .phi = camera.phi};
     V3 cube_center = scale(polar_to_rectangular(camera_pos), -1.0);
+    V3 minus_center = scale(cube_center, -1.0);
+    // TODO: calculate the vector that defines the plane of the camera screen
+    // (the one that is CAMERA_SCREEN_DIST away from the camera)
+    V3 plane_perp = {0};
+    double d = dot(cube_center, plane_perp);
 
+    // TODO: verify this math
     V3 camera_perp = {
         .rho = camera.rho,
         .theta = camera.theta + PI,
@@ -343,14 +349,27 @@ static void get_point_projections(Camera camera, V3 const *vertices,
     for (int i = 0; i < count; ++i) {
         V3 corner_pos = add(cube_center, vertices[i]);
         V3 corner_dir = as_unit(corner_pos);
-        V3 perp = {0};
+        V3 perp, offset;
+        double corner_d = dot(corner_dir, plane_perp);
+        double corner_mag;
+
         double x_component, y_component;
         V3 diff_in_x, diff_in_y;
 
-        decompose(vertices[0], corner_dir, &perp);
-        perp = scale(as_unit(perp), similarity_ratio);
+        DCHECK(corner_d != 0,
+               "Corner is parallel to the plane of the camera\n");
 
-        diff_in_y = decompose(perp, y_dir, &diff_in_x);
+        corner_mag = d / corner_d;
+        // this is the vector in the plane of the camera
+        perp = scale(corner_dir, corner_mag);
+        offset = add(perp, minus_center);
+
+        // decompose(vertices[0], corner_dir, &perp);
+        // perp = scale(as_unit(perp), similarity_ratio);
+
+        // diff_in_y = decompose(perp, y_dir, &diff_in_x);
+
+        diff_in_y = decompose(offset, y_dir, &diff_in_x);
         x_component = sqrt(length_sq(diff_in_x));
         y_component = sqrt(length_sq(diff_in_y));
 
