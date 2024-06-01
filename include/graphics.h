@@ -13,6 +13,7 @@ typedef struct {
 
 typedef struct {
     double x, y;
+    int should_rotate;
     Camera camera;
 } State;
 
@@ -20,6 +21,7 @@ typedef struct {
     int xdir;
     int ydir;
 
+    int toggle_rotate;
     int camera_rho_dir;
     int camera_theta_dir;
     int camera_phi_dir;

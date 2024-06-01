@@ -10,7 +10,29 @@ static void update(Application *app, StateUpdate s_update, double delta_time);
 static void draw(Application *app);
 
 static void get_point_projections(Camera camera, V3 const *vertices,
-                                  SDL_Vertex *projections, uint32_t count);
+                                  SDL_FPoint *projections, float *zs,
+                                  uint32_t count);
+
+static void get_convex_hull(SDL_FPoint const *projections, int *is_hull,
+                            uint32_t count);
+
+static void get_visible_faces(int const *is_hull, float const *zs,
+                              uint32_t vertex_count, int const *face_indices,
+                              uint32_t face_index_count, int *face_visible,
+                              uint32_t face_count);
+
+typedef struct {
+    int r, g, b;
+} Color;
+
+Color const face_colors[6] = {
+    {.r = 0xFF, .g = 0xFF, .b = 0xFF}, //
+    {.r = 0xFF, .g = 0, .b = 0},       //
+    {.r = 0, .g = 0, .b = 0xFF},       //
+    {.r = 0xFF, .g = 0x80, .b = 0x80}, //
+    {.r = 0, .g = 0xFF, .b = 0},       //
+    {.r = 0xFF, .g = 0xFF, .b = 0},    //
+};
 
 static int r = 0xFF;
 static int g = 0xFF;
@@ -18,6 +40,35 @@ static int b = 0xFF;
 
 static double target_mspf = 1000.0 / 60.0;
 static int print_a_thing = 0;
+
+static double theta_rot_dir = 1.0;
+static double phi_rot_dir = 1.0;
+
+#define TRIANGLE_IND_COUNT (6 * VERTEX_COUNT_TO_TRIANGLE_COUNT(4))
+static int triangle_indices_for_cube[TRIANGLE_IND_COUNT] = {0};
+
+#define PRINT_ARR_D(arr) _print_arr_d(arr, ARR_SIZE(arr))
+#define PRINT_ARR_F(arr) _print_arr_f(arr, ARR_SIZE(arr))
+static void _print_arr_d(int *arr, uint32_t count) {
+    printf("[");
+    for (int i = 0; i < count; ++i) {
+        if (i != 0) {
+            printf(", ");
+        }
+        printf("%d", arr[i]);
+    }
+    printf("]\n");
+}
+static void _print_arr_f(float *arr, uint32_t count) {
+    printf("[");
+    for (int i = 0; i < count; ++i) {
+        if (i != 0) {
+            printf(", ");
+        }
+        printf("%f", arr[i]);
+    }
+    printf("]\n");
+}
 
 #define CLEANUP(n)                                                             \
     do {                                                                       \
@@ -112,6 +163,9 @@ int graphics_main(void) {
 
                         .state = get_initial_state()};
 
+    expand_vertices_to_triangles(face_indices, ARR_SIZE(face_indices), 4,
+                                 triangle_indices_for_cube);
+
     loop(&app);
 
 cleanup:
@@ -166,8 +220,14 @@ static void loop(Application *app) {
                     s_update.xdir = 1;
                 }
 
+                // print the current status
                 if (keys[SDL_SCANCODE_P] == 1) {
                     print_a_thing = 1;
+                }
+
+                // start / stop automatic rotation
+                if (keys[SDL_SCANCODE_U] == 1) {
+                    s_update.toggle_rotate = 1;
                 }
 
                 // zoom in/out on the cube
@@ -215,8 +275,8 @@ static void loop(Application *app) {
 
 #define RECT_PIXELS_PER_SEC 500.0
 #define RHO_PIXELS_PER_SEC 10.0
-#define THETA_PIXELS_PER_SEC (2 * PI / 10)
-#define PHI_PIXELS_PER_SEC (-PI / 10.0)
+#define THETA_PIXELS_PER_SEC (2.0 * PI / 10.0)
+#define PHI_PIXELS_PER_SEC (-2.0 * PI / 10.0)
 
 #define DANGEROUS_MAX(a, b) ((a) > (b) ? (a) : (b))
 #define DANGEROUS_MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -234,6 +294,16 @@ static void update(Application *app, StateUpdate s_update, double delta_time) {
     state->x += s_update.xdir * delta_time * RECT_PIXELS_PER_SEC;
     state->y += s_update.ydir * delta_time * RECT_PIXELS_PER_SEC;
 
+    if ((state->camera.theta <= 0.0 + 0.001 && theta_rot_dir < 0) ||
+        (state->camera.theta >= 2 * PI - 0.001 && theta_rot_dir > 0)) {
+        theta_rot_dir *= -1.0;
+    }
+
+    if ((state->camera.phi <= 0.0 + 0.001 && phi_rot_dir < 0) ||
+        (state->camera.phi >= PI - 0.001 && phi_rot_dir > 0)) {
+        phi_rot_dir *= -1.0;
+    }
+
     new_rho = state->camera.rho +
               s_update.camera_rho_dir * delta_time * RHO_PIXELS_PER_SEC;
     new_theta = state->camera.theta +
@@ -241,14 +311,24 @@ static void update(Application *app, StateUpdate s_update, double delta_time) {
     new_phi = state->camera.phi +
               s_update.camera_phi_dir * delta_time * PHI_PIXELS_PER_SEC;
 
+    if (state->should_rotate) {
+        new_theta += theta_rot_dir * THETA_PIXELS_PER_SEC * delta_time;
+        new_phi -= phi_rot_dir * PHI_PIXELS_PER_SEC * delta_time;
+    }
+
     // For now, these numbers are made up... they should be adjusted later
-    state->camera.rho = DANGEROUS_CLAMP(10.0, new_rho, 1000.0);
+    state->camera.rho =
+        DANGEROUS_CLAMP(1.5 * CAMERA_SCREEN_DIST, new_rho, 1000.0);
     // state->camera.theta = my_dmod(new_theta, 2 * PI);
     state->camera.theta = new_theta;
     state->camera.phi = DANGEROUS_CLAMP(0.0, new_phi, PI);
+    if (s_update.toggle_rotate) {
+        state->should_rotate = 1 - state->should_rotate;
+    }
 }
 
-#define RED {.r = 0xFF, .g = 0, .b = 0, .a = 0xFF}
+#define RED                                                                    \
+    { .r = 0xFF, .g = 0, .b = 0, .a = 0xFF }
 static SDL_Vertex vertices[] = {
     {{.x = 50, .y = 50}, RED, {0}}, //
     {{.x = 40, .y = 60}, RED, {0}}, //
@@ -272,11 +352,33 @@ static void draw(Application *app) {
     Uint8 r_, g_, b_, a_;
     SDL_Rect rect = {.x = (int)state->x, .y = (int)state->y, .w = 50, .h = 50};
 
-    SDL_Vertex projected_verts[ARR_SIZE(cube_vertices)] = {0};
-    SDL_Point projected_points[ARR_SIZE(cube_vertices)] = {0};
+    int const faces = 6;
+    int const single_face_ind_count = VERTEX_COUNT_TO_TRIANGLE_COUNT(4);
 
-    get_point_projections(state->camera, cube_vertices, projected_verts,
+    SDL_FPoint projected_verts[ARR_SIZE(cube_vertices)] = {0};
+    float zs[ARR_SIZE(cube_vertices)] = {0};
+    int is_hull_points[ARR_SIZE(cube_vertices)] = {0};
+    SDL_Vertex face_vertices[TRIANGLE_IND_COUNT] = {0};
+    int visible_faces[6] = {0};
+
+    int width, height;
+
+    SDL_GetWindowSize(app->window, &width, &height);
+
+    get_point_projections(state->camera, cube_vertices, projected_verts, zs,
                           cube_vert_count);
+
+    get_convex_hull(projected_verts, is_hull_points, ARR_SIZE(cube_vertices));
+    get_visible_faces(is_hull_points, zs, ARR_SIZE(cube_vertices),
+                      triangle_indices_for_cube,
+                      ARR_SIZE(triangle_indices_for_cube), visible_faces,
+                      ARR_SIZE(visible_faces));
+
+    if (print_a_thing) {
+        PRINT_ARR_D(is_hull_points);
+        PRINT_ARR_D(visible_faces);
+        PRINT_ARR_F(zs);
+    }
 
     if (print_a_thing) {
         Camera *camera = &state->camera;
@@ -284,36 +386,56 @@ static void draw(Application *app) {
                "    .rho   = %f\n"
                "    .theta = %f\n"
                "    .phi   = %f\n"
-               "}\n",
-               camera->rho, camera->theta, camera->phi);
+               "}\n"
+               "theta_rot_dir = %f\n"
+               "phi_rot_dir = %f\n",
+               camera->rho, camera->theta, camera->phi, theta_rot_dir,
+               phi_rot_dir);
     }
-    for (int i = 0; i < cube_vert_count; ++i) {
-        double x = projected_verts[i].position.x;
-        double y = projected_verts[i].position.y;
 
-        if (print_a_thing) {
-            printf("[%d] %f\t%f\n", i, x, y);
-        }
+    uint32_t cur_face_dest = 0;
+    for (int i = 0; i < faces; ++i) {
+        if (!visible_faces[i])
+            continue;
 
-        // double factor = 100.0;
         double factor = 100.0;
-        projected_points[i] = (SDL_Point){
-            .x = (factor * x) + (680 / 2),
-            .y = (factor * y) + (480 / 2),
+        int const *cur_face_indices =
+            triangle_indices_for_cube + (single_face_ind_count * i);
+
+        for (int j = 0; j < single_face_ind_count; ++j) {
+            Color const c = face_colors[i];
+            int const vert_ind = cur_face_indices[j];
+
+            SDL_Vertex *dest =
+                face_vertices + (cur_face_dest * single_face_ind_count + j);
+
+            *dest = (SDL_Vertex){
+                .color = {.r = c.r, .g = c.g, .b = c.b, .a = 0xFF},
+                .position =
+                    (SDL_FPoint){
+                        .x = width / 2 + projected_verts[vert_ind].x * factor,
+                        .y = height / 2 + projected_verts[vert_ind].y * factor,
+                    },
+                .tex_coord = (SDL_FPoint){0}};
         };
+
+        cur_face_dest += 1;
     }
     if (print_a_thing) {
         printf("\n");
     }
 
     SDL_RenderClear(app->window_renderer);
-
     SDL_GetRenderDrawColor(app->window_renderer, &r_, &g_, &b_, &a_);
+
     SDL_SetRenderDrawColor(app->window_renderer, r, g, b, 0xFF);
     SDL_RenderFillRect(app->window_renderer, &rect);
 
-    SDL_RenderDrawPoints(app->window_renderer, projected_points,
-                         cube_vert_count);
+    SDL_RenderDrawPointsF(app->window_renderer, projected_verts,
+                          cube_vert_count);
+
+    SDL_RenderGeometry(app->window_renderer, NULL, face_vertices,
+                       ARR_SIZE(face_vertices), NULL, 0);
 
     SDL_SetRenderDrawColor(app->window_renderer, r_, g_, b_, a_);
 
@@ -327,7 +449,8 @@ static void draw(Application *app) {
 }
 
 static void get_point_projections(Camera camera, V3 const *vertices,
-                                  SDL_Vertex *projections, uint32_t count) {
+                                  SDL_FPoint *projections, float *zs,
+                                  uint32_t count) {
     V3 camera_pos = {
         .rho = camera.rho, .theta = camera.theta, .phi = camera.phi};
     V3 minus_center = polar_to_rectangular(camera_pos);
@@ -355,19 +478,21 @@ static void get_point_projections(Camera camera, V3 const *vertices,
         V3 projected_3d = scale(corner_pos, scale_factor);
         V3 projected_2d, plane_x, plane_y;
 
-        double x_component, y_component;
+        double x_component, y_component, z_component;
 
         decompose(projected_3d, unit_center, &projected_2d);
         plane_y = decompose(projected_2d, y_dir, &plane_x);
 
         x_component = dot(plane_x, x_dir);
         y_component = dot(plane_y, y_dir);
+        z_component = -1.0f * dot(vertices[i], unit_center);
 
-        projections[i] = (SDL_Vertex){0};
-        projections[i].position = (SDL_FPoint){
+        projections[i] = (SDL_FPoint){
             .x = x_component,
             .y = y_component,
         };
+
+        zs[i] = z_component;
 
         if (print_a_thing) {
             printf("\n\tpre : x = %f,\ty = %f,\t z = %f\n\tproj: x = %f,\ty = "
@@ -383,5 +508,106 @@ static void get_point_projections(Camera camera, V3 const *vertices,
                "    .z = %f\n"
                "}\n",
                y_dir.x, y_dir.y, y_dir.z);
+    }
+}
+
+static inline double slope_of(SDL_FPoint target, SDL_FPoint base) {
+    return atan2(target.y - base.y, target.x - base.x);
+}
+
+#define testing
+#ifdef testing
+static inline double unit(double d) { return d; }
+#define fabs unit
+#endif
+
+static uint32_t ind_of_closest_angle(SDL_FPoint const *projections,
+                                     uint32_t count, uint32_t cur_index,
+                                     double from_angle) {
+    uint32_t cur_closest = (cur_index + 1) % count;
+    double cur_slope =
+        slope_of(projections[cur_closest], projections[cur_index]);
+
+    cur_slope = cur_slope < from_angle ? cur_slope + TWO_PI : cur_slope;
+    double distance = fabs(cur_slope - from_angle);
+
+    for (int i = 2; i < count; ++i) {
+        uint32_t vertex_ind = (cur_index + i) % count;
+        double slope =
+            slope_of(projections[vertex_ind], projections[cur_index]);
+
+        slope = slope < from_angle ? slope + TWO_PI : slope;
+        double new_distance = fabs(slope - from_angle);
+
+        if (new_distance < distance) {
+            cur_closest = vertex_ind;
+            distance = new_distance;
+        }
+    }
+
+    return cur_closest;
+}
+
+static void get_convex_hull(SDL_FPoint const *projections, int *is_hull,
+                            uint32_t count) {
+    uint32_t max_point_ind = 0;
+    uint32_t last_ind, cur_ind;
+    double cur_slope = PI_2;
+
+    // special cases?
+    if (count == 1) {
+        is_hull[0] = 1;
+        return;
+    } else if (count == 2) {
+        is_hull[0] = 1;
+        is_hull[1] = 1;
+        return;
+    }
+
+    for (int vertex_id = 0; vertex_id < count; ++vertex_id) {
+        is_hull[vertex_id] = 0;
+    }
+
+    for (int vertex_id = 1; vertex_id < count; ++vertex_id) {
+        if ((projections[vertex_id].x > projections[max_point_ind].x) ||
+            ((projections[vertex_id].x == projections[max_point_ind].x) &&
+             (projections[vertex_id].y > projections[max_point_ind].y))) {
+            max_point_ind = vertex_id;
+        }
+    }
+
+    last_ind = max_point_ind;
+
+    is_hull[last_ind] = 1;
+    cur_ind = ind_of_closest_angle(projections, count, last_ind, cur_slope);
+
+    while (cur_ind != max_point_ind) {
+        cur_slope = slope_of(projections[cur_ind], projections[last_ind]);
+        last_ind = cur_ind;
+
+        is_hull[last_ind] = 1;
+        cur_ind = ind_of_closest_angle(projections, count, last_ind, cur_slope);
+    }
+}
+
+static void get_visible_faces(int const *is_hull, float const *zs,
+                              uint32_t vertex_count, int const *face_indices,
+                              uint32_t face_index_count, int *face_visible,
+                              uint32_t face_count) {
+    uint32_t indices_per_face = face_index_count / face_count;
+
+    for (int face_id = 0; face_id < face_count; ++face_id) {
+        int count_vis = 0;
+
+        for (int index_id = 0; index_id < indices_per_face; ++index_id) {
+            uint32_t cur_index =
+                face_indices[indices_per_face * face_id + index_id];
+
+            if (is_hull[cur_index] || zs[cur_index] > 0) {
+                ++count_vis;
+            }
+        }
+
+        face_visible[face_id] = count_vis == indices_per_face;
     }
 }

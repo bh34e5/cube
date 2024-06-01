@@ -1,8 +1,11 @@
 #ifndef MATH_h
 #define MATH_h
 
+#include <stdint.h>
+
 #define PI 3.14159265358979323846264338327950288
-#define PI_2 (PI / 2)
+#define TWO_PI (2.0 * PI)
+#define PI_2 (PI / 2.0)
 
 typedef struct {
     union {
@@ -16,7 +19,13 @@ typedef struct {
 } V3;
 
 extern V3 const cube_vertices[8];
+extern int const face_indices[24];
 extern int const cube_vert_count;
+extern int const face_index_count;
+
+#define VERTEX_COUNT_TO_TRIANGLE_COUNT(vertex_count) ((vertex_count) * 3 - 6)
+void expand_vertices_to_triangles(int const *indices, uint32_t index_count,
+                                  uint32_t indices_per_face, int *triangles);
 
 V3 add(V3 lhs, V3 rhs);
 V3 scale(V3 v, double c);

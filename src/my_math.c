@@ -1,6 +1,8 @@
 #include "my_math.h"
 
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "common.h"
@@ -18,7 +20,45 @@ V3 const cube_vertices[8] = {
     {.x = (+1.0), .y = (+1.0), .z = (-1.0)},
 };
 
+// TODO: map the faces with the colors...
+int const face_indices[6 * 4] = {
+    0, 1, 2, 3, //
+    2, 3, 4, 5, //
+    1, 2, 5, 6, //
+    0, 1, 6, 7, //
+    4, 5, 6, 7, //
+    0, 3, 4, 7, //
+};
+
 int const cube_vert_count = ARR_SIZE(cube_vertices);
+int const face_index_count = ARR_SIZE(face_indices);
+
+void expand_vertices_to_triangles(int const *indices, uint32_t index_count,
+                                  uint32_t indices_per_face, int *triangles) {
+    uint32_t face_count = index_count / indices_per_face;
+    uint32_t triangle_indices_per_face =
+        VERTEX_COUNT_TO_TRIANGLE_COUNT(indices_per_face);
+
+    for (uint32_t face_id = 0; face_id < face_count; ++face_id) {
+        int f_base = face_id * indices_per_face;
+        int tf_base = face_id * triangle_indices_per_face;
+        int last_end = 2;
+
+        triangles[tf_base + 0] = indices[f_base + 0];
+        triangles[tf_base + 1] = indices[f_base + 1];
+        triangles[tf_base + 2] = indices[f_base + 2];
+
+        for (int i = 1; i < index_count; ++i) {
+            int offset = 3 * i;
+
+            triangles[tf_base + offset + 0] = indices[f_base + 0];
+            triangles[tf_base + offset + 1] = indices[f_base + last_end + 0];
+            triangles[tf_base + offset + 2] = indices[f_base + last_end + 1];
+
+            last_end = last_end + 1;
+        }
+    }
+}
 
 inline V3 add(V3 lhs, V3 rhs) {
     return (V3){
