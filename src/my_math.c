@@ -40,6 +40,14 @@ inline double dot(V3 lhs, V3 rhs) {
     return (lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z);
 }
 
+inline V3 cross(V3 lhs, V3 rhs) {
+    return (V3){
+        .x = +1.0 * (lhs.y * rhs.z - lhs.z * rhs.y),
+        .y = -1.0 * (lhs.x * rhs.z - lhs.z * rhs.x),
+        .z = +1.0 * (lhs.x * rhs.y - lhs.y * rhs.x),
+    };
+}
+
 inline double length_sq(V3 v) { return dot(v, v); }
 
 inline V3 as_unit(V3 v) {
@@ -58,10 +66,8 @@ inline V3 polar_to_rectangular(V3 v) {
 }
 
 V3 decompose(V3 target, V3 dir, V3 *perp) {
-    V3 res = V3_of(dir.x, dir.y, dir.z);
     double dotted = dot(target, dir);
-
-    res = scale(res, dotted);
+    V3 res = scale(dir, dotted);
 
     if (perp != NULL) {
         V3 diff = add(target, scale(res, -1.0));

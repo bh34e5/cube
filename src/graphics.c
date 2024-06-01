@@ -68,9 +68,9 @@ static int print_a_thing = 0;
 
 static State get_initial_state(void) {
     Camera initial_camera = {
-        .rho = 10.0,
+        .rho = 2.0 * CAMERA_SCREEN_DIST,
         .theta = 0.0,
-        .phi = PI / 2,
+        .phi = PI_2,
     };
 
     return (State){.x = 0.0,
@@ -166,31 +166,29 @@ static void loop(Application *app) {
                     s_update.xdir = 1;
                 }
 
+                if (keys[SDL_SCANCODE_P] == 1) {
+                    print_a_thing = 1;
+                }
+
                 // zoom in/out on the cube
                 if (keys[SDL_SCANCODE_I] == 1) {
                     s_update.camera_rho_dir = -1;
-                    print_a_thing = 1;
                 } else if (keys[SDL_SCANCODE_O] == 1) {
                     s_update.camera_rho_dir = 1;
-                    print_a_thing = 1;
                 }
 
                 // move the camera up and down
                 if (keys[SDL_SCANCODE_DOWN] == 1) {
                     s_update.camera_phi_dir = -1;
-                    print_a_thing = 1;
                 } else if (keys[SDL_SCANCODE_UP] == 1) {
                     s_update.camera_phi_dir = 1;
-                    print_a_thing = 1;
                 }
 
                 // move the camera left and right
                 if (keys[SDL_SCANCODE_LEFT] == 1) {
                     s_update.camera_theta_dir = -1;
-                    print_a_thing = 1;
                 } else if (keys[SDL_SCANCODE_RIGHT] == 1) {
                     s_update.camera_theta_dir = 1;
-                    print_a_thing = 1;
                 }
             } break;
             }
@@ -216,9 +214,9 @@ static void loop(Application *app) {
 }
 
 #define RECT_PIXELS_PER_SEC 500.0
-#define RHO_PIXELS_PER_SEC 1.0
+#define RHO_PIXELS_PER_SEC 10.0
 #define THETA_PIXELS_PER_SEC (2 * PI / 10)
-#define PHI_PIXELS_PER_SEC (PI / 10.0)
+#define PHI_PIXELS_PER_SEC (-PI / 10.0)
 
 #define DANGEROUS_MAX(a, b) ((a) > (b) ? (a) : (b))
 #define DANGEROUS_MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -283,13 +281,13 @@ static void draw(Application *app) {
     if (print_a_thing) {
         Camera *camera = &state->camera;
         printf("camera = {\n"
-               "    .rho = %f\n"
+               "    .rho   = %f\n"
                "    .theta = %f\n"
-               "    .phi = %f\n"
+               "    .phi   = %f\n"
                "}\n",
                camera->rho, camera->theta, camera->phi);
     }
-    for (int i = 0; i < vertex_count; ++i) {
+    for (int i = 0; i < cube_vert_count; ++i) {
         double x = projected_verts[i].position.x;
         double y = projected_verts[i].position.y;
 
@@ -297,9 +295,11 @@ static void draw(Application *app) {
             printf("[%d] %f\t%f\n", i, x, y);
         }
 
+        // double factor = 100.0;
+        double factor = 100.0;
         projected_points[i] = (SDL_Point){
-            .x = 500 * x + 680 / 4,
-            .y = 500 * y + 480 / 4,
+            .x = (factor * x) + (680 / 2),
+            .y = (factor * y) + (480 / 2),
         };
     }
     if (print_a_thing) {
@@ -312,7 +312,8 @@ static void draw(Application *app) {
     SDL_SetRenderDrawColor(app->window_renderer, r, g, b, 0xFF);
     SDL_RenderFillRect(app->window_renderer, &rect);
 
-    SDL_RenderDrawPoints(app->window_renderer, projected_points, vertex_count);
+    SDL_RenderDrawPoints(app->window_renderer, projected_points,
+                         cube_vert_count);
 
     SDL_SetRenderDrawColor(app->window_renderer, r_, g_, b_, a_);
 
@@ -327,56 +328,60 @@ static void draw(Application *app) {
 
 static void get_point_projections(Camera camera, V3 const *vertices,
                                   SDL_Vertex *projections, uint32_t count) {
-    // double similarity_ratio = CAMERA_SCREEN_DIST / camera.rho;
     V3 camera_pos = {
         .rho = camera.rho, .theta = camera.theta, .phi = camera.phi};
-    V3 cube_center = scale(polar_to_rectangular(camera_pos), -1.0);
-    V3 minus_center = scale(cube_center, -1.0);
-    // TODO: calculate the vector that defines the plane of the camera screen
-    // (the one that is CAMERA_SCREEN_DIST away from the camera)
-    V3 plane_perp = {0};
-    double d = dot(cube_center, plane_perp);
+    V3 minus_center = polar_to_rectangular(camera_pos);
+    V3 cube_center = scale(minus_center, -1.0);
+    V3 unit_center = as_unit(cube_center);
+    double d_over_rho = CAMERA_SCREEN_DIST / camera_pos.rho;
+    double dist_sq = length_sq(cube_center);
+    double numerator = d_over_rho * dist_sq;
 
-    // TODO: verify this math
-    V3 camera_perp = {
-        .rho = camera.rho,
-        .theta = camera.theta + PI,
-        .phi = (PI / 2.0) - camera.phi,
+    V3 y_dir_polar = {
+        .rho = 1,
+        .theta =
+            camera_pos.phi >= PI_2 ? camera_pos.theta : camera_pos.theta + PI,
+        .phi = camera_pos.phi >= PI_2 ? camera_pos.phi - PI_2
+                                      : PI_2 - camera_pos.phi,
     };
-    V3 y_axis = polar_to_rectangular(camera_perp);
-    V3 y_dir = as_unit(y_axis);
+    V3 y_dir = polar_to_rectangular(y_dir_polar);
+    V3 x_dir = cross(unit_center, y_dir);
 
     for (int i = 0; i < count; ++i) {
         V3 corner_pos = add(cube_center, vertices[i]);
-        V3 corner_dir = as_unit(corner_pos);
-        V3 perp, offset;
-        double corner_d = dot(corner_dir, plane_perp);
-        double corner_mag;
+        double corner_dot_center = dot(corner_pos, cube_center);
+        double scale_factor = numerator / corner_dot_center;
+
+        V3 projected_3d = scale(corner_pos, scale_factor);
+        V3 projected_2d, plane_x, plane_y;
 
         double x_component, y_component;
-        V3 diff_in_x, diff_in_y;
 
-        DCHECK(corner_d != 0,
-               "Corner is parallel to the plane of the camera\n");
+        decompose(projected_3d, unit_center, &projected_2d);
+        plane_y = decompose(projected_2d, y_dir, &plane_x);
 
-        corner_mag = d / corner_d;
-        // this is the vector in the plane of the camera
-        perp = scale(corner_dir, corner_mag);
-        offset = add(perp, minus_center);
-
-        // decompose(vertices[0], corner_dir, &perp);
-        // perp = scale(as_unit(perp), similarity_ratio);
-
-        // diff_in_y = decompose(perp, y_dir, &diff_in_x);
-
-        diff_in_y = decompose(offset, y_dir, &diff_in_x);
-        x_component = sqrt(length_sq(diff_in_x));
-        y_component = sqrt(length_sq(diff_in_y));
+        x_component = dot(plane_x, x_dir);
+        y_component = dot(plane_y, y_dir);
 
         projections[i] = (SDL_Vertex){0};
         projections[i].position = (SDL_FPoint){
             .x = x_component,
             .y = y_component,
         };
+
+        if (print_a_thing) {
+            printf("\n\tpre : x = %f,\ty = %f,\t z = %f\n\tproj: x = %f,\ty = "
+                   "%f\n",
+                   corner_pos.x, corner_pos.y, corner_pos.z, x_component,
+                   y_component);
+        }
+    }
+    if (print_a_thing) {
+        printf("y_dir = {\n"
+               "    .x = %f\n"
+               "    .y = %f\n"
+               "    .z = %f\n"
+               "}\n",
+               y_dir.x, y_dir.y, y_dir.z);
     }
 }

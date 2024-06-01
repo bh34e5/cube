@@ -2,6 +2,7 @@
 #define MATH_h
 
 #define PI 3.14159265358979323846264338327950288
+#define PI_2 (PI / 2)
 
 typedef struct {
     union {
@@ -21,6 +22,7 @@ V3 add(V3 lhs, V3 rhs);
 V3 scale(V3 v, double c);
 
 double dot(V3 lhs, V3 rhs);
+V3 cross(V3 lhs, V3 rhs);
 double length_sq(V3 v);
 V3 as_unit(V3 v);
 V3 polar_to_rectangular(V3 v);
