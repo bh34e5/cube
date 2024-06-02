@@ -13,7 +13,8 @@ FILES=main.c \
 			cube.c \
 			tests.c \
 			graphics.c \
-			my_math.c
+			my_math.c \
+			memory.c
 OBJS=$(patsubst %.c,$(BUILD)/%.o,$(FILES))
 
 SDL_CONFIG=$(shell sdl2-config --cflags --libs)

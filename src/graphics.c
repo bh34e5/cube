@@ -25,7 +25,10 @@ typedef struct {
     int r, g, b;
 } Color;
 
-Color const face_colors[6] = {
+#define CUBE_FACES 6
+#define TRIANGLE_IND_COUNT (CUBE_FACES * VERTEX_COUNT_TO_TRIANGLE_COUNT(4))
+
+Color const face_colors[CUBE_FACES] = {
     {.r = 0xFF, .g = 0xFF, .b = 0xFF}, //
     {.r = 0xFF, .g = 0, .b = 0},       //
     {.r = 0, .g = 0, .b = 0xFF},       //
@@ -38,43 +41,15 @@ static int r = 0xFF;
 static int g = 0xFF;
 static int b = 0xFF;
 
-static double target_mspf = 1000.0 / 60.0;
+#define FRAMES 60.0
+static double target_mspf = 1000.0 / FRAMES;
 static int print_a_thing = 0;
 
 static double theta_rot_dir = 1.0;
 static double phi_rot_dir = 1.0;
-
-#define TRIANGLE_IND_COUNT (6 * VERTEX_COUNT_TO_TRIANGLE_COUNT(4))
 static int triangle_indices_for_cube[TRIANGLE_IND_COUNT] = {0};
 
-#define PRINT_ARR_D(arr) _print_arr_d(arr, ARR_SIZE(arr))
-#define PRINT_ARR_F(arr) _print_arr_f(arr, ARR_SIZE(arr))
-static void _print_arr_d(int *arr, uint32_t count) {
-    printf("[");
-    for (int i = 0; i < count; ++i) {
-        if (i != 0) {
-            printf(", ");
-        }
-        printf("%d", arr[i]);
-    }
-    printf("]\n");
-}
-static void _print_arr_f(float *arr, uint32_t count) {
-    printf("[");
-    for (int i = 0; i < count; ++i) {
-        if (i != 0) {
-            printf(", ");
-        }
-        printf("%f", arr[i]);
-    }
-    printf("]\n");
-}
-
-#define CLEANUP(n)                                                             \
-    do {                                                                       \
-        ret = (n);                                                             \
-        goto cleanup;                                                          \
-    } while (0)
+static int const single_face_ind_count = VERTEX_COUNT_TO_TRIANGLE_COUNT(4);
 
 /**
  * The broad idea I have for this:
@@ -131,14 +106,28 @@ static State get_initial_state(void) {
 }
 
 int graphics_main(void) {
+#define CLEANUP _CLEANUP(__COUNTER__ + 1)
+#define _CLEANUP(n)                                                            \
+    do {                                                                       \
+        ret = (n);                                                             \
+        goto cleanup;                                                          \
+    } while (0)
+
     int ret = 0;
-    Application app = {0};
-    SDL_Window *window = NULL;
-    SDL_Renderer *window_renderer = NULL;
+    Arena *arena;
+    Application app;
+    SDL_Window *window;
+    SDL_Renderer *window_renderer;
+
+    arena = alloc_arena();
+    if (arena == NULL) {
+        fprintf(stderr, "Failed to allocate arena\n");
+        CLEANUP;
+    }
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         fprintf(stderr, "Failed to init SDL\n");
-        CLEANUP(1);
+        CLEANUP;
     }
 
     window = SDL_CreateWindow("My Window", SDL_WINDOWPOS_CENTERED,
@@ -146,7 +135,7 @@ int graphics_main(void) {
 
     if (window == NULL) {
         fprintf(stderr, "Failed to create window\n");
-        CLEANUP(2);
+        CLEANUP;
     }
 
     // using -1 here says to let SDL choose which driver index to use
@@ -154,13 +143,14 @@ int graphics_main(void) {
 
     if (window_renderer == NULL) {
         fprintf(stderr, "Failed to create window renderer\n");
-        CLEANUP(3);
+        CLEANUP;
     }
 
     app = (Application){.window = window,
                         .window_renderer = window_renderer,
                         .last_ticks = SDL_GetTicks(),
 
+                        .arena = arena,
                         .state = get_initial_state()};
 
     expand_vertices_to_triangles(face_indices, ARR_SIZE(face_indices), 4,
@@ -179,6 +169,9 @@ cleanup:
     SDL_Quit();
 
     return ret;
+
+#undef _CLEANUP
+#undef CLEANUP
 }
 
 static void loop(Application *app) {
@@ -283,10 +276,6 @@ static void loop(Application *app) {
 
 #define DANGEROUS_CLAMP(min, n, max) (DANGEROUS_MIN(max, DANGEROUS_MAX(min, n)))
 
-double my_dmod(double arg, double modulus) {
-    return arg - (modulus * (arg / modulus));
-}
-
 static void update(Application *app, StateUpdate s_update, double delta_time) {
     State *state = &app->state;
     double new_rho, new_theta, new_phi;
@@ -318,134 +307,107 @@ static void update(Application *app, StateUpdate s_update, double delta_time) {
 
     // For now, these numbers are made up... they should be adjusted later
     state->camera.rho =
-        DANGEROUS_CLAMP(1.5 * CAMERA_SCREEN_DIST, new_rho, 1000.0);
-    // state->camera.theta = my_dmod(new_theta, 2 * PI);
-    state->camera.theta = new_theta;
+        DANGEROUS_CLAMP(1.1 * CAMERA_SCREEN_DIST, new_rho, 1000.0);
+    state->camera.theta = new_theta; // TODO: mod by 2pi
     state->camera.phi = DANGEROUS_CLAMP(0.0, new_phi, PI);
     if (s_update.toggle_rotate) {
         state->should_rotate = 1 - state->should_rotate;
     }
 }
 
-#define RED                                                                    \
-    { .r = 0xFF, .g = 0, .b = 0, .a = 0xFF }
-static SDL_Vertex vertices[] = {
-    {{.x = 50, .y = 50}, RED, {0}}, //
-    {{.x = 40, .y = 60}, RED, {0}}, //
-    {{.x = 50, .y = 70}, RED, {0}}, //
-    {{.x = 60, .y = 70}, RED, {0}}, //
-    {{.x = 70, .y = 60}, RED, {0}}, //
-    {{.x = 60, .y = 50}, RED, {0}}, //
-};
-static int vertex_count = ARR_SIZE(vertices);
-
-static int indices[] = {
-    0, 1, 2, //
-    0, 2, 5, //
-    2, 3, 5, //
-    5, 3, 4, //
-};
-static int index_count = ARR_SIZE(indices);
-
 static void draw(Application *app) {
     State *state = &app->state;
-    Uint8 r_, g_, b_, a_;
-    SDL_Rect rect = {.x = (int)state->x, .y = (int)state->y, .w = 50, .h = 50};
 
-    int const faces = 6;
-    int const single_face_ind_count = VERTEX_COUNT_TO_TRIANGLE_COUNT(4);
-
-    SDL_FPoint projected_verts[ARR_SIZE(cube_vertices)] = {0};
-    float zs[ARR_SIZE(cube_vertices)] = {0};
-    int is_hull_points[ARR_SIZE(cube_vertices)] = {0};
-    SDL_Vertex face_vertices[TRIANGLE_IND_COUNT] = {0};
-    int visible_faces[6] = {0};
+    SDL_FPoint *projected_verts;
+    float *zs;
+    int *is_hull_points;
+    SDL_Vertex *face_vertices;
+    int visible_faces[CUBE_FACES] = {0};
 
     int width, height;
 
     SDL_GetWindowSize(app->window, &width, &height);
 
-    get_point_projections(state->camera, cube_vertices, projected_verts, zs,
-                          cube_vert_count);
+    if (arena_begin(app->arena) >= 0) {
+        projected_verts = ARENA_PUSH_N(SDL_FPoint, app->arena, cube_vert_count);
+        zs = ARENA_PUSH_N(float, app->arena, cube_vert_count);
+        is_hull_points = ARENA_PUSH_N(int, app->arena, cube_vert_count);
+        face_vertices =
+            ARENA_PUSH_N(SDL_Vertex, app->arena, TRIANGLE_IND_COUNT);
 
-    get_convex_hull(projected_verts, is_hull_points, ARR_SIZE(cube_vertices));
-    get_visible_faces(is_hull_points, zs, ARR_SIZE(cube_vertices),
-                      triangle_indices_for_cube,
-                      ARR_SIZE(triangle_indices_for_cube), visible_faces,
-                      ARR_SIZE(visible_faces));
+        if (projected_verts == NULL || zs == NULL || is_hull_points == NULL ||
+            face_vertices == NULL) {
+            fprintf(stderr, "Could not allocate at least one array\n");
+            goto skip_this;
+        }
 
-    if (print_a_thing) {
-        PRINT_ARR_D(is_hull_points);
-        PRINT_ARR_D(visible_faces);
-        PRINT_ARR_F(zs);
+        get_point_projections(state->camera, cube_vertices, projected_verts, zs,
+                              cube_vert_count);
+
+        get_convex_hull(projected_verts, is_hull_points,
+                        ARR_SIZE(cube_vertices));
+        get_visible_faces(is_hull_points, zs, ARR_SIZE(cube_vertices),
+                          triangle_indices_for_cube,
+                          ARR_SIZE(triangle_indices_for_cube), visible_faces,
+                          ARR_SIZE(visible_faces));
+
+        if (print_a_thing) {
+            Camera *camera = &state->camera;
+            printf("camera = {\n"
+                   "    .rho   = %f\n"
+                   "    .theta = %f\n"
+                   "    .phi   = %f\n"
+                   "}\n"
+                   "theta_rot_dir = %f\n"
+                   "phi_rot_dir = %f\n",
+                   camera->rho, camera->theta, camera->phi, theta_rot_dir,
+                   phi_rot_dir);
+        }
+
+        uint32_t cur_face_dest = 0;
+        for (int i = 0; i < CUBE_FACES; ++i) {
+            if (!visible_faces[i])
+                continue;
+
+            double factor = 100.0;
+            int const *cur_face_indices =
+                triangle_indices_for_cube + (single_face_ind_count * i);
+
+            for (int j = 0; j < single_face_ind_count; ++j) {
+                Color const c = face_colors[i];
+                int const vert_ind = cur_face_indices[j];
+
+                SDL_Vertex *dest =
+                    face_vertices + (cur_face_dest * single_face_ind_count + j);
+
+                *dest = (SDL_Vertex){
+                    .color = {.r = c.r, .g = c.g, .b = c.b, .a = 0xFF},
+                    .position =
+                        (SDL_FPoint){
+                            .x = width / 2 +
+                                 projected_verts[vert_ind].x * factor,
+                            .y = height / 2 +
+                                 projected_verts[vert_ind].y * factor,
+                        },
+                    .tex_coord = (SDL_FPoint){0}};
+            };
+
+            cur_face_dest += 1;
+        }
+        if (print_a_thing) {
+            printf("\n");
+        }
+
+        SDL_SetRenderDrawColor(app->window_renderer, 0, 0, 0, 0xFF);
+        SDL_RenderClear(app->window_renderer);
+        SDL_RenderGeometry(app->window_renderer, NULL, face_vertices,
+                           TRIANGLE_IND_COUNT, NULL, 0);
+
+        SDL_RenderPresent(app->window_renderer);
+
+    skip_this:
+        arena_pop(app->arena);
     }
-
-    if (print_a_thing) {
-        Camera *camera = &state->camera;
-        printf("camera = {\n"
-               "    .rho   = %f\n"
-               "    .theta = %f\n"
-               "    .phi   = %f\n"
-               "}\n"
-               "theta_rot_dir = %f\n"
-               "phi_rot_dir = %f\n",
-               camera->rho, camera->theta, camera->phi, theta_rot_dir,
-               phi_rot_dir);
-    }
-
-    uint32_t cur_face_dest = 0;
-    for (int i = 0; i < faces; ++i) {
-        if (!visible_faces[i])
-            continue;
-
-        double factor = 100.0;
-        int const *cur_face_indices =
-            triangle_indices_for_cube + (single_face_ind_count * i);
-
-        for (int j = 0; j < single_face_ind_count; ++j) {
-            Color const c = face_colors[i];
-            int const vert_ind = cur_face_indices[j];
-
-            SDL_Vertex *dest =
-                face_vertices + (cur_face_dest * single_face_ind_count + j);
-
-            *dest = (SDL_Vertex){
-                .color = {.r = c.r, .g = c.g, .b = c.b, .a = 0xFF},
-                .position =
-                    (SDL_FPoint){
-                        .x = width / 2 + projected_verts[vert_ind].x * factor,
-                        .y = height / 2 + projected_verts[vert_ind].y * factor,
-                    },
-                .tex_coord = (SDL_FPoint){0}};
-        };
-
-        cur_face_dest += 1;
-    }
-    if (print_a_thing) {
-        printf("\n");
-    }
-
-    SDL_RenderClear(app->window_renderer);
-    SDL_GetRenderDrawColor(app->window_renderer, &r_, &g_, &b_, &a_);
-
-    SDL_SetRenderDrawColor(app->window_renderer, r, g, b, 0xFF);
-    SDL_RenderFillRect(app->window_renderer, &rect);
-
-    SDL_RenderDrawPointsF(app->window_renderer, projected_verts,
-                          cube_vert_count);
-
-    SDL_RenderGeometry(app->window_renderer, NULL, face_vertices,
-                       ARR_SIZE(face_vertices), NULL, 0);
-
-    SDL_SetRenderDrawColor(app->window_renderer, r_, g_, b_, a_);
-
-    SDL_RenderGeometry(app->window_renderer, NULL, vertices, vertex_count,
-                       indices, index_count);
-
-    // SDL_Texture *texture = NULL;
-    // SDL_RenderCopy(app->window_renderer, texture, NULL, NULL);
-
-    SDL_RenderPresent(app->window_renderer);
 }
 
 static void get_point_projections(Camera camera, V3 const *vertices,
@@ -453,6 +415,7 @@ static void get_point_projections(Camera camera, V3 const *vertices,
                                   uint32_t count) {
     V3 camera_pos = {
         .rho = camera.rho, .theta = camera.theta, .phi = camera.phi};
+
     V3 minus_center = polar_to_rectangular(camera_pos);
     V3 cube_center = scale(minus_center, -1.0);
     V3 unit_center = as_unit(cube_center);
@@ -515,12 +478,6 @@ static inline double slope_of(SDL_FPoint target, SDL_FPoint base) {
     return atan2(target.y - base.y, target.x - base.x);
 }
 
-#define testing
-#ifdef testing
-static inline double unit(double d) { return d; }
-#define fabs unit
-#endif
-
 static uint32_t ind_of_closest_angle(SDL_FPoint const *projections,
                                      uint32_t count, uint32_t cur_index,
                                      double from_angle) {
@@ -529,7 +486,7 @@ static uint32_t ind_of_closest_angle(SDL_FPoint const *projections,
         slope_of(projections[cur_closest], projections[cur_index]);
 
     cur_slope = cur_slope < from_angle ? cur_slope + TWO_PI : cur_slope;
-    double distance = fabs(cur_slope - from_angle);
+    double distance = cur_slope - from_angle;
 
     for (int i = 2; i < count; ++i) {
         uint32_t vertex_ind = (cur_index + i) % count;
@@ -537,7 +494,7 @@ static uint32_t ind_of_closest_angle(SDL_FPoint const *projections,
             slope_of(projections[vertex_ind], projections[cur_index]);
 
         slope = slope < from_angle ? slope + TWO_PI : slope;
-        double new_distance = fabs(slope - from_angle);
+        double new_distance = slope - from_angle;
 
         if (new_distance < distance) {
             cur_closest = vertex_ind;
