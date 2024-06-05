@@ -18,6 +18,8 @@ typedef struct {
     };
 } V3;
 
+#define V3_of(x_v, y_v, z_v) ((V3){.x = (x_v), .y = (y_v), .z = (z_v)})
+
 extern V3 const cube_vertices[8];
 extern int const face_indices[24];
 extern int const cube_vert_count;

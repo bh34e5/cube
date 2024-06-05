@@ -7,8 +7,6 @@
 
 #include "common.h"
 
-#define V3_of(x_v, y_v, z_v) ((V3){.x = (x_v), .y = (y_v), .z = (z_v)})
-
 V3 const cube_vertices[8] = {
     {.x = (+1.0), .y = (+1.0), .z = (+1.0)},
     {.x = (-1.0), .y = (+1.0), .z = (+1.0)},
@@ -20,14 +18,13 @@ V3 const cube_vertices[8] = {
     {.x = (+1.0), .y = (+1.0), .z = (-1.0)},
 };
 
-// TODO: map the faces with the colors...
 int const face_indices[6 * 4] = {
-    0, 1, 2, 3, //
+    0, 3, 2, 1, //
     2, 3, 4, 5, //
     1, 2, 5, 6, //
     0, 1, 6, 7, //
-    4, 5, 6, 7, //
-    0, 3, 4, 7, //
+    4, 7, 6, 5, //
+    0, 7, 4, 3, //
 };
 
 int const cube_vert_count = ARR_SIZE(cube_vertices);

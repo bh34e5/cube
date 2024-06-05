@@ -2,271 +2,517 @@
 
 #include <stdio.h>
 
-#include "common.h"
 #include "my_math.h"
 
-static void loop(Application *app);
-static void update(Application *app, StateUpdate s_update, double delta_time);
-static void draw(Application *app);
+#define _DEBUG
 
-static void get_point_projections(Camera camera, V3 const *vertices,
-                                  SDL_FPoint *projections, float *zs,
-                                  uint32_t count);
+#define CLEANUP_IF(check, ...)                                                 \
+    do {                                                                       \
+        if (check) {                                                           \
+            CLEANUP(__VA_ARGS__);                                              \
+        }                                                                      \
+    } while (0)
 
-static void get_convex_hull(SDL_FPoint const *projections, int *is_hull,
-                            uint32_t count);
+#define CLEANUP(...) _CLEANUP(__COUNTER__ + 1, __VA_ARGS__)
+#define _CLEANUP(n, ...)                                                       \
+    do {                                                                       \
+        fprintf(stderr, __VA_ARGS__);                                          \
+        ret = n;                                                               \
+        goto cleanup;                                                          \
+    } while (0)
 
-static void get_visible_faces(int const *is_hull, float const *zs,
-                              uint32_t vertex_count, int const *face_indices,
-                              uint32_t face_index_count, int *face_visible,
-                              uint32_t face_count);
-
-typedef struct {
-    int r, g, b;
-} Color;
-
-#define CUBE_FACES 6
-#define TRIANGLE_IND_COUNT (CUBE_FACES * VERTEX_COUNT_TO_TRIANGLE_COUNT(4))
-
-Color const face_colors[CUBE_FACES] = {
-    {.r = 0xFF, .g = 0xFF, .b = 0xFF}, //
-    {.r = 0xFF, .g = 0, .b = 0},       //
-    {.r = 0, .g = 0, .b = 0xFF},       //
-    {.r = 0xFF, .g = 0x80, .b = 0x80}, //
-    {.r = 0, .g = 0xFF, .b = 0},       //
-    {.r = 0xFF, .g = 0xFF, .b = 0},    //
-};
-
-static int r = 0xFF;
-static int g = 0xFF;
-static int b = 0xFF;
+static int print_a_thing = 0;
 
 #define FRAMES 60.0
 static double target_mspf = 1000.0 / FRAMES;
-static int print_a_thing = 0;
 
-static double theta_rot_dir = 1.0;
-static double phi_rot_dir = 1.0;
-static int triangle_indices_for_cube[TRIANGLE_IND_COUNT] = {0};
+static int *indices;
+static int const square_indices_per_face = 4;
+static int const num_indices = 6 * VERTEX_COUNT_TO_TRIANGLE_COUNT(4);
 
-static int const single_face_ind_count = VERTEX_COUNT_TO_TRIANGLE_COUNT(4);
-
-/**
- * The broad idea I have for this:
- *
- * I have a cube with side length 2 placed centered at the origin. Then I have a
- * camera that is placed at a distance R from the origin. This R value can be
- * changed using some keys, but must be at least Sqrt(3) (I think) away so that
- * it doesn't move inside the cube.
- *
- * The camera can also change its phi and its psi angles so that it is free to
- * move around horizontally and vertically.
- *
- * To render, what I need to do is find the _projected_ locations of each of the
- * cube's 8 corners. The projection will be onto some plane orthogonal to the
- * ray cast from the camera to the origin. And this plane should remain a fixed
- * distance from the camera (I think).
- *
- * Once I have these projected locations, I should calculated the convex hull of
- * the 8 points and fill that with some color. Once I have that, I will need to
- * paint the other colors on top of that surface, but I'll worry about that a
- * bit later. I just want to make sure that I can see a reasonable convex hull
- * first.
- *
- * I can try to lookup the algorithm for calculating the convex hull, but I want
- * to try to take a stab at it myself first. I vaguely remember something, and
- * the way that it works is:
- *
- * 1. sort the points by the x coordinate. Find the point(s) with the largest x
- * coordinate and take the one with the largest y. That point is on the
- * boundary.
- *
- * 2. Take the vertical line that runs through that point and pivot it around
- * the point in a counter-clockwise manner until intersecting with another
- * point. That point is on the boundary.
- *
- * 3. From this new point, and the starting slope the same, continue rotating
- * the line counter-clockwise until hitting another point.
- *
- * 4. Continue this until you end up back at the first point. These points that
- * were found are all the points that make up the boundary of the hull.
- */
-
-static State get_initial_state(void) {
-    Camera initial_camera = {
+static Camera get_initial_camera(void) {
+    return (Camera){
         .rho = 2.0 * CAMERA_SCREEN_DIST,
         .theta = 0.0,
         .phi = PI_2,
     };
-
-    return (State){.x = 0.0,
-                   .y = 0.0,
-
-                   .camera = initial_camera};
 }
 
-int graphics_main(void) {
-#define CLEANUP _CLEANUP(__COUNTER__ + 1)
-#define _CLEANUP(n)                                                            \
-    do {                                                                       \
-        ret = (n);                                                             \
-        goto cleanup;                                                          \
-    } while (0)
+static State get_initial_state(void) {
+    return (State){
+        .theta_rot_dir = 1.0,
+        .phi_rot_dir = 1.0,
 
+        .should_rotate = 0,
+        .should_close = 0,
+        .camera = get_initial_camera(),
+    };
+}
+
+#define INIT_WIDTH 680
+#define INIT_HEIGHT 480
+
+static int sdl_init(SDL_Window **window) {
     int ret = 0;
-    Arena *arena;
-    Application app;
-    SDL_Window *window;
-    SDL_Renderer *window_renderer;
 
-    arena = alloc_arena();
-    if (arena == NULL) {
-        fprintf(stderr, "Failed to allocate arena\n");
-        CLEANUP;
-    }
+    CLEANUP_IF(SDL_Init(SDL_INIT_VIDEO) < 0, "Failed to init SDL\n");
 
-    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-        fprintf(stderr, "Failed to init SDL\n");
-        CLEANUP;
-    }
+    // use OpenGL 4.2 Core profile
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,
+                        SDL_GL_CONTEXT_PROFILE_CORE);
 
-    window = SDL_CreateWindow("My Window", SDL_WINDOWPOS_CENTERED,
-                              SDL_WINDOWPOS_CENTERED, 680, 480, 0);
+    // Turn on double buffering with 24-bit z buffer
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
 
-    if (window == NULL) {
-        fprintf(stderr, "Failed to create window\n");
-        CLEANUP;
-    }
+    *window = SDL_CreateWindow("Rubik's Cube", SDL_WINDOWPOS_CENTERED,
+                               SDL_WINDOWPOS_CENTERED, INIT_WIDTH, INIT_HEIGHT,
+                               SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
 
-    // using -1 here says to let SDL choose which driver index to use
-    window_renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-
-    if (window_renderer == NULL) {
-        fprintf(stderr, "Failed to create window renderer\n");
-        CLEANUP;
-    }
-
-    app = (Application){.window = window,
-                        .window_renderer = window_renderer,
-                        .last_ticks = SDL_GetTicks(),
-
-                        .arena = arena,
-                        .state = get_initial_state()};
-
-    expand_vertices_to_triangles(face_indices, ARR_SIZE(face_indices), 4,
-                                 triangle_indices_for_cube);
-
-    loop(&app);
+    CLEANUP_IF(*window == NULL, "Failed to create window\n");
 
 cleanup:
-    // getting fields from `app` in case they got changed
-    if (app.window_renderer != NULL) {
-        SDL_DestroyRenderer(app.window_renderer);
+    if (ret != 0) {
+        if (*window != NULL) {
+            SDL_DestroyWindow(*window);
+        }
+
+        SDL_Quit();
     }
-    if (app.window != NULL) {
-        SDL_DestroyWindow(app.window);
-    }
-    SDL_Quit();
 
     return ret;
-
-#undef _CLEANUP
-#undef CLEANUP
 }
 
-static void loop(Application *app) {
-    int should_not_close = 1;
-    while (should_not_close) {
+static int load_file(char const *filename, long *size, char **p_contents) {
+    int ret = 0;
+    FILE *f = NULL;
+    char *contents = NULL;
+    long f_len;
+    unsigned long n_read;
+
+    f = fopen(filename, "r");
+
+    fseek(f, 0, SEEK_END);
+    f_len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    contents = (char *)malloc((sizeof(char) * f_len) + 1);
+
+    CLEANUP_IF(contents == NULL,
+               "Failed to alloc buffer for file contents. Wanted %lu bytes.\n",
+               f_len);
+
+    *p_contents = contents;
+    *size = f_len;
+
+    // read a single block of file length because we need the whole file
+    n_read = fread(contents, f_len, 1, f);
+
+    CLEANUP_IF(n_read != 1, "Failed to read file contents\n");
+
+    contents[f_len] = '\0';
+
+cleanup:
+    if (ret != 0) {
+        if (contents != NULL) {
+            free(contents);
+        }
+
+        if (f != NULL) {
+            fclose(f);
+        }
+    }
+
+    return ret;
+}
+
+static int gl_load_shader(GLuint *ui_shader, GLenum shader_type,
+                          GLchar const *c_shader) {
+    GLint int_test_return;
+
+    *ui_shader = glCreateShader(shader_type);
+    glShaderSource(*ui_shader, 1, &c_shader, NULL);
+    glCompileShader(*ui_shader);
+
+    glGetShaderiv(*ui_shader, GL_COMPILE_STATUS, &int_test_return);
+    if (int_test_return == GL_FALSE) {
+        GLchar p_c_info_log[1024];
+        int32_t i_error_length;
+
+        glGetShaderInfoLog(*ui_shader, 1024, &i_error_length, p_c_info_log);
+        SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION,
+                        "Failed to compile shader: %s\n", p_c_info_log);
+        glDeleteShader(*ui_shader);
+        return -1;
+    }
+
+    return 0;
+}
+
+#define GEOM_SHADER_GOOD 0
+
+static int gl_link_program(GLuint *program, GLuint vertex_shader,
+                           GLuint geometry_shader, GLuint fragment_shader) {
+    GLint int_test_return;
+
+    *program = glCreateProgram();
+    glAttachShader(*program, vertex_shader);
+#if GEOM_SHADER_GOOD
+    glAttachShader(*program, geometry_shader);
+#endif
+    glAttachShader(*program, fragment_shader);
+    glLinkProgram(*program);
+
+    glGetProgramiv(*program, GL_LINK_STATUS, &int_test_return);
+    if (int_test_return == GL_FALSE) {
+        GLchar p_c_info_log[1024];
+        int32_t i_error_length;
+
+        glGetShaderInfoLog(*program, 1024, &i_error_length, p_c_info_log);
+        SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION,
+                        "Failed to link shaders: %s\n", p_c_info_log);
+        glDeleteProgram(*program);
+        return -1;
+    }
+
+    return 0;
+}
+
+#ifdef _DEBUG
+static char *p_severity[] = {"High", "Medium", "Low", "Notification"};
+static char *p_type[] = {"Error",       "Deprecated",  "Undefined",
+                         "Portability", "Performance", "Other"};
+static char *p_source[] = {"OpenGL",    "OS",          "GLSL Compiler",
+                           "3rd Party", "Application", "Other"};
+
+static void debug_callback(uint32_t source, uint32_t type, uint32_t id,
+                           uint32_t severity, int32_t length,
+                           char const *p_message, void *p_user_param) {
+    uint32_t sev_id = 3;
+    uint32_t type_id = 5;
+    uint32_t source_id = 5;
+
+    // Get the severity
+    switch (severity) {
+    case GL_DEBUG_SEVERITY_HIGH:
+        sev_id = 0;
+        break;
+    case GL_DEBUG_SEVERITY_MEDIUM:
+        sev_id = 1;
+        break;
+    case GL_DEBUG_SEVERITY_LOW:
+        sev_id = 2;
+        break;
+    case GL_DEBUG_SEVERITY_NOTIFICATION:
+    default:
+        sev_id = 3;
+        break;
+    }
+
+    // Get the type
+    switch (type) {
+    case GL_DEBUG_TYPE_ERROR:
+        type_id = 0;
+        break;
+    case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR:
+        type_id = 1;
+        break;
+    case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR:
+        type_id = 2;
+        break;
+    case GL_DEBUG_TYPE_PORTABILITY:
+        type_id = 3;
+        break;
+    case GL_DEBUG_TYPE_PERFORMANCE:
+        type_id = 4;
+        break;
+    case GL_DEBUG_TYPE_OTHER:
+    default:
+        type_id = 5;
+        break;
+    }
+
+    // Get the source
+    switch (source) {
+    case GL_DEBUG_SOURCE_API:
+        source_id = 0;
+        break;
+    case GL_DEBUG_SOURCE_WINDOW_SYSTEM:
+        source_id = 1;
+        break;
+    case GL_DEBUG_SOURCE_SHADER_COMPILER:
+        source_id = 2;
+        break;
+    case GL_DEBUG_SOURCE_THIRD_PARTY:
+        source_id = 3;
+        break;
+    case GL_DEBUG_SOURCE_APPLICATION:
+        source_id = 4;
+        break;
+    case GL_DEBUG_SOURCE_OTHER:
+    default:
+        source_id = 5;
+        break;
+    }
+
+    // Output to the Log
+    SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION,
+                    "OpenGL Debug: Severity=%s, Type=%s, Source=%s - %s",
+                    p_severity[sev_id], p_type[type_id], p_source[source_id],
+                    p_message);
+
+    if (severity == GL_DEBUG_SEVERITY_HIGH) {
+        // This a serious error so we need to shutdown the program
         SDL_Event event;
-        Uint32 last_ticks, ticks;
-        StateUpdate s_update = {0};
-        double cur_delta_ms;
-
-        print_a_thing = 0;
-        while (SDL_PollEvent(&event) > 0) {
-            switch (event.type) {
-            case SDL_QUIT: {
-                should_not_close = 0;
-            } break;
-            case SDL_KEYDOWN: {
-                Uint8 const *keys = SDL_GetKeyboardState(NULL);
-                // change the color of the rectangle
-                if (keys[SDL_SCANCODE_R] == 1) {
-                    r = 0xFF - r;
-                } else if (keys[SDL_SCANCODE_G] == 1) {
-                    g = 0xFF - g;
-                } else if (keys[SDL_SCANCODE_B] == 1) {
-                    b = 0xFF - b;
-                }
-
-                // move the rectangle up and down
-                if (keys[SDL_SCANCODE_W] == 1) {
-                    s_update.ydir = -1;
-                } else if (keys[SDL_SCANCODE_S] == 1) {
-                    s_update.ydir = 1;
-                }
-
-                // move the rectangle left and right
-                if (keys[SDL_SCANCODE_A] == 1) {
-                    s_update.xdir = -1;
-                } else if (keys[SDL_SCANCODE_D] == 1) {
-                    s_update.xdir = 1;
-                }
-
-                // print the current status
-                if (keys[SDL_SCANCODE_P] == 1) {
-                    print_a_thing = 1;
-                }
-
-                // start / stop automatic rotation
-                if (keys[SDL_SCANCODE_U] == 1) {
-                    s_update.toggle_rotate = 1;
-                }
-
-                // zoom in/out on the cube
-                if (keys[SDL_SCANCODE_I] == 1) {
-                    s_update.camera_rho_dir = -1;
-                } else if (keys[SDL_SCANCODE_O] == 1) {
-                    s_update.camera_rho_dir = 1;
-                }
-
-                // move the camera up and down
-                if (keys[SDL_SCANCODE_DOWN] == 1) {
-                    s_update.camera_phi_dir = -1;
-                } else if (keys[SDL_SCANCODE_UP] == 1) {
-                    s_update.camera_phi_dir = 1;
-                }
-
-                // move the camera left and right
-                if (keys[SDL_SCANCODE_LEFT] == 1) {
-                    s_update.camera_theta_dir = -1;
-                } else if (keys[SDL_SCANCODE_RIGHT] == 1) {
-                    s_update.camera_theta_dir = 1;
-                }
-            } break;
-            }
-        }
-
-        last_ticks = app->last_ticks;
-        ticks = SDL_GetTicks();
-
-        cur_delta_ms = (double)(ticks - last_ticks);
-
-        if (cur_delta_ms < target_mspf) {
-            double diff = target_mspf - cur_delta_ms;
-
-            SDL_Delay((Uint32)diff);
-            cur_delta_ms += diff;
-        }
-
-        update(app, s_update, cur_delta_ms / 1000.0);
-        draw(app);
-
-        app->last_ticks = ticks;
+        event.type = SDL_QUIT;
+        SDL_PushEvent(&event);
     }
 }
 
-#define RECT_PIXELS_PER_SEC 500.0
+static void gl_debug_init() {
+    uint32_t unused_ids = 0;
+
+    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+
+    glDebugMessageCallback((GLDEBUGPROC)&debug_callback, NULL);
+
+    glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0,
+                          &unused_ids, GL_TRUE);
+    glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE,
+                          GL_DEBUG_SEVERITY_NOTIFICATION, 0, NULL, GL_FALSE);
+}
+#endif
+
+#define VERTEX_SHADER_NAME "./shaders/cube.vert"
+#define GEOMETRY_SHADER_NAME "./shaders/cube.geom"
+#define FRAGMENT_SHADER_NAME "./shaders/cube.frag"
+
+static int gl_init(SDL_Window *window, Application_GL_Info *gl_info) {
+    int ret = 0;
+    SDL_GLContext context = NULL;
+    GLenum glew_error;
+    GLuint vert_shader, geom_shader, frag_shader, gl_program;
+
+    char *vert_contents = NULL;
+    char *geom_contents = NULL;
+    char *frag_contents = NULL;
+    long vert_size, geom_size, frag_size;
+
+    GLuint vao, vbo[2], ebo;
+
+    context = SDL_GL_CreateContext(window);
+    CLEANUP_IF(context == NULL, "Could not create OpenGL context\n");
+
+    CLEANUP_IF((glew_error = glewInit()) != GLEW_OK,
+               "Failed to initialize GLEW: %s\n",
+               glewGetErrorString(glew_error));
+
+#if !GEOM_SHADER_GOOD
+    // TODO: remove these when bringing the geometry shader back
+    geom_shader = 0;
+    (void)geom_contents;
+    (void)geom_size;
+#endif
+
+    // TODO: figure out if this should be +1 or -1
+    SDL_GL_SetSwapInterval(-1);
+
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glFrontFace(GL_CW);
+    glCullFace(GL_BACK);
+    glEnable(GL_CULL_FACE);
+    glEnable(GL_DEPTH_TEST);    // TODO: what is this?
+    glDisable(GL_STENCIL_TEST); // TODO: what is this?
+
+#ifdef _DEBUG
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG);
+    gl_debug_init();
+#endif
+
+    CLEANUP_IF(load_file(VERTEX_SHADER_NAME, &vert_size, &vert_contents) != 0,
+               "Failed to load vertex shader contents\n");
+
+#if GEOM_SHADER_GOOD
+    CLEANUP_IF(load_file(GEOMETRY_SHADER_NAME, &geom_size, &geom_contents) != 0,
+               "Failed to load geometry shader contents\n");
+#endif
+
+    CLEANUP_IF(load_file(FRAGMENT_SHADER_NAME, &frag_size, &frag_contents) != 0,
+               "Failed to load fragment shader contents\n");
+
+    CLEANUP_IF(gl_load_shader(&vert_shader, GL_VERTEX_SHADER,
+                              (GLchar const *)vert_contents) < 0,
+               "Failed to load vertex shader\n");
+
+#if GEOM_SHADER_GOOD
+    CLEANUP_IF(gl_load_shader(&geom_shader, GL_GEOMETRY_SHADER,
+                              (GLchar const *)geom_contents) < 0,
+               "Failed to load geometry shader\n");
+#endif
+
+    CLEANUP_IF(gl_load_shader(&frag_shader, GL_FRAGMENT_SHADER,
+                              (GLchar const *)frag_contents) < 0,
+               "Failed to load fragment shader\n");
+
+    CLEANUP_IF(
+        gl_link_program(&gl_program, vert_shader, geom_shader, frag_shader) < 0,
+        "Failed to link program\n");
+
+    // after linking, it's okay to delete these
+    free(vert_contents);
+    free(geom_contents);
+    free(frag_contents);
+    glDeleteShader(vert_shader);
+#if GEOM_SHADER_GOOD
+    glDeleteShader(geom_shader);
+#endif
+    glDeleteShader(frag_shader);
+
+    glUseProgram(gl_program);
+
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(2, &vbo[0]);
+    glGenBuffers(1, &ebo);
+
+    glBindVertexArray(vao);
+
+    *gl_info = (Application_GL_Info){
+        .gl_context = context,
+        .gl_program = gl_program,
+
+        .vao = 0,
+        .vbo = {0},
+        .ebo = 0,
+    };
+    gl_info->vao = vao;
+    gl_info->vbo[0] = vbo[0];
+    gl_info->vbo[1] = vbo[1];
+    gl_info->ebo = ebo;
+
+cleanup:
+    if (ret != 0) {
+        if (frag_contents != NULL) {
+            free(frag_contents);
+        }
+
+        if (vert_contents != NULL) {
+            free(vert_contents);
+        }
+
+        if (context != NULL) {
+            SDL_GL_DeleteContext(context);
+        }
+    }
+
+    return ret;
+}
+
+static void app_cleanup(Application *app) {
+    if (app->gl_info.ebo != 0) {
+        glDeleteBuffers(1, &app->gl_info.ebo);
+    }
+
+    if (app->gl_info.vbo[0] != 0) {
+        glDeleteBuffers(2, &app->gl_info.vbo[0]);
+    }
+
+    if (app->gl_info.vao != 0) {
+        glDeleteVertexArrays(1, &app->gl_info.vao);
+    }
+
+    if (app->gl_info.gl_program != 0) {
+        glDeleteProgram(app->gl_info.gl_program);
+    }
+
+    if (app->gl_info.gl_context != NULL) {
+        SDL_GL_DeleteContext(app->gl_info.gl_context);
+    }
+
+    if (app->window != NULL) {
+        SDL_DestroyWindow(app->window);
+    }
+
+    if (app->arena != NULL) {
+        free_arena(app->arena);
+    }
+
+    SDL_Quit();
+}
+
+static StateUpdate get_inputs(Application const *app) {
+    SDL_Event event;
+    Uint32 last_ticks, ticks;
+    StateUpdate s_update = {0};
+    double cur_delta_ms;
+
+    print_a_thing = 0;
+    while (SDL_PollEvent(&event) > 0) {
+        switch (event.type) {
+        case SDL_QUIT: {
+            s_update.toggle_close = 1;
+        } break;
+        case SDL_KEYDOWN: {
+            Uint8 const *keys = SDL_GetKeyboardState(NULL);
+
+            // quit the application on Q
+            if (keys[SDL_SCANCODE_Q] == 1) {
+                s_update.toggle_close = 1;
+            }
+
+            // print the current status
+            if (keys[SDL_SCANCODE_P] == 1) {
+                print_a_thing = 1;
+            }
+
+            // start / stop automatic rotation
+            if (keys[SDL_SCANCODE_U] == 1) {
+                s_update.toggle_rotate = 1;
+            }
+
+            // zoom in/out on the cube
+            if (keys[SDL_SCANCODE_I] == 1) {
+                s_update.camera_rho_dir = -1;
+            } else if (keys[SDL_SCANCODE_O] == 1) {
+                s_update.camera_rho_dir = 1;
+            }
+
+            // move the camera up and down
+            if (keys[SDL_SCANCODE_DOWN] == 1) {
+                s_update.camera_phi_dir = -1;
+            } else if (keys[SDL_SCANCODE_UP] == 1) {
+                s_update.camera_phi_dir = 1;
+            }
+
+            // move the camera left and right
+            if (keys[SDL_SCANCODE_LEFT] == 1) {
+                s_update.camera_theta_dir = -1;
+            } else if (keys[SDL_SCANCODE_RIGHT] == 1) {
+                s_update.camera_theta_dir = 1;
+            }
+        } break;
+        }
+    }
+
+    last_ticks = app->last_ticks;
+    ticks = SDL_GetTicks();
+
+    cur_delta_ms = (double)(ticks - last_ticks);
+
+    if (cur_delta_ms < target_mspf) {
+        double diff = target_mspf - cur_delta_ms;
+
+        SDL_Delay((Uint32)diff);
+        cur_delta_ms += diff;
+    }
+
+    s_update.delta_time = cur_delta_ms / 1000.0;
+    s_update.ticks = ticks;
+
+    return s_update;
+}
+
 #define RHO_PIXELS_PER_SEC 10.0
 #define THETA_PIXELS_PER_SEC (2.0 * PI / 10.0)
 #define PHI_PIXELS_PER_SEC (-2.0 * PI / 10.0)
@@ -276,22 +522,10 @@ static void loop(Application *app) {
 
 #define DANGEROUS_CLAMP(min, n, max) (DANGEROUS_MIN(max, DANGEROUS_MAX(min, n)))
 
-static void update(Application *app, StateUpdate s_update, double delta_time) {
+static void update(Application *app, StateUpdate s_update) {
     State *state = &app->state;
+    double delta_time = s_update.delta_time;
     double new_rho, new_theta, new_phi;
-
-    state->x += s_update.xdir * delta_time * RECT_PIXELS_PER_SEC;
-    state->y += s_update.ydir * delta_time * RECT_PIXELS_PER_SEC;
-
-    if ((state->camera.theta <= 0.0 + 0.001 && theta_rot_dir < 0) ||
-        (state->camera.theta >= 2 * PI - 0.001 && theta_rot_dir > 0)) {
-        theta_rot_dir *= -1.0;
-    }
-
-    if ((state->camera.phi <= 0.0 + 0.001 && phi_rot_dir < 0) ||
-        (state->camera.phi >= PI - 0.001 && phi_rot_dir > 0)) {
-        phi_rot_dir *= -1.0;
-    }
 
     new_rho = state->camera.rho +
               s_update.camera_rho_dir * delta_time * RHO_PIXELS_PER_SEC;
@@ -301,8 +535,19 @@ static void update(Application *app, StateUpdate s_update, double delta_time) {
               s_update.camera_phi_dir * delta_time * PHI_PIXELS_PER_SEC;
 
     if (state->should_rotate) {
-        new_theta += theta_rot_dir * THETA_PIXELS_PER_SEC * delta_time;
-        new_phi -= phi_rot_dir * PHI_PIXELS_PER_SEC * delta_time;
+        if ((state->camera.theta <= 0.0 + 0.001 && state->theta_rot_dir < 0) ||
+            (state->camera.theta >= 2 * PI - 0.001 &&
+             state->theta_rot_dir > 0)) {
+            state->theta_rot_dir *= -1.0;
+        }
+
+        if ((state->camera.phi <= 0.0 + 0.001 && state->phi_rot_dir < 0) ||
+            (state->camera.phi >= PI - 0.001 && state->phi_rot_dir > 0)) {
+            state->phi_rot_dir *= -1.0;
+        }
+
+        new_theta += state->theta_rot_dir * THETA_PIXELS_PER_SEC * delta_time;
+        new_phi -= state->phi_rot_dir * PHI_PIXELS_PER_SEC * delta_time;
     }
 
     // For now, these numbers are made up... they should be adjusted later
@@ -310,108 +555,69 @@ static void update(Application *app, StateUpdate s_update, double delta_time) {
         DANGEROUS_CLAMP(1.1 * CAMERA_SCREEN_DIST, new_rho, 1000.0);
     state->camera.theta = new_theta; // TODO: mod by 2pi
     state->camera.phi = DANGEROUS_CLAMP(0.0, new_phi, PI);
+
+    if (s_update.toggle_close) {
+        state->should_close = 1 - state->should_close;
+    }
+
     if (s_update.toggle_rotate) {
         state->should_rotate = 1 - state->should_rotate;
     }
+
+    app->last_ticks = s_update.ticks;
 }
 
-static void draw(Application *app) {
-    State *state = &app->state;
+typedef struct {
+    float x, y, z, r, g, b;
+} VertexInformation;
 
-    SDL_FPoint *projected_verts;
-    float *zs;
-    int *is_hull_points;
-    SDL_Vertex *face_vertices;
-    int visible_faces[CUBE_FACES] = {0};
-
-    int width, height;
-
-    SDL_GetWindowSize(app->window, &width, &height);
-
-    if (arena_begin(app->arena) >= 0) {
-        projected_verts = ARENA_PUSH_N(SDL_FPoint, app->arena, cube_vert_count);
-        zs = ARENA_PUSH_N(float, app->arena, cube_vert_count);
-        is_hull_points = ARENA_PUSH_N(int, app->arena, cube_vert_count);
-        face_vertices =
-            ARENA_PUSH_N(SDL_Vertex, app->arena, TRIANGLE_IND_COUNT);
-
-        if (projected_verts == NULL || zs == NULL || is_hull_points == NULL ||
-            face_vertices == NULL) {
-            fprintf(stderr, "Could not allocate at least one array\n");
-            goto skip_this;
-        }
-
-        get_point_projections(state->camera, cube_vertices, projected_verts, zs,
-                              cube_vert_count);
-
-        get_convex_hull(projected_verts, is_hull_points,
-                        ARR_SIZE(cube_vertices));
-        get_visible_faces(is_hull_points, zs, ARR_SIZE(cube_vertices),
-                          triangle_indices_for_cube,
-                          ARR_SIZE(triangle_indices_for_cube), visible_faces,
-                          ARR_SIZE(visible_faces));
-
-        if (print_a_thing) {
-            Camera *camera = &state->camera;
-            printf("camera = {\n"
-                   "    .rho   = %f\n"
-                   "    .theta = %f\n"
-                   "    .phi   = %f\n"
-                   "}\n"
-                   "theta_rot_dir = %f\n"
-                   "phi_rot_dir = %f\n",
-                   camera->rho, camera->theta, camera->phi, theta_rot_dir,
-                   phi_rot_dir);
-        }
-
-        uint32_t cur_face_dest = 0;
-        for (int i = 0; i < CUBE_FACES; ++i) {
-            if (!visible_faces[i])
-                continue;
-
-            double factor = 100.0;
-            int const *cur_face_indices =
-                triangle_indices_for_cube + (single_face_ind_count * i);
-
-            for (int j = 0; j < single_face_ind_count; ++j) {
-                Color const c = face_colors[i];
-                int const vert_ind = cur_face_indices[j];
-
-                SDL_Vertex *dest =
-                    face_vertices + (cur_face_dest * single_face_ind_count + j);
-
-                *dest = (SDL_Vertex){
-                    .color = {.r = c.r, .g = c.g, .b = c.b, .a = 0xFF},
-                    .position =
-                        (SDL_FPoint){
-                            .x = width / 2 +
-                                 projected_verts[vert_ind].x * factor,
-                            .y = height / 2 +
-                                 projected_verts[vert_ind].y * factor,
-                        },
-                    .tex_coord = (SDL_FPoint){0}};
-            };
-
-            cur_face_dest += 1;
-        }
-        if (print_a_thing) {
-            printf("\n");
-        }
-
-        SDL_SetRenderDrawColor(app->window_renderer, 0, 0, 0, 0xFF);
-        SDL_RenderClear(app->window_renderer);
-        SDL_RenderGeometry(app->window_renderer, NULL, face_vertices,
-                           TRIANGLE_IND_COUNT, NULL, 0);
-
-        SDL_RenderPresent(app->window_renderer);
-
-    skip_this:
-        arena_pop(app->arena);
+static void get_color_for_corner(int corner_ind, float *r, float *g, float *b) {
+    switch (corner_ind) {
+    case 0:
+        *r = 1.0f;
+        *g = 0.0f;
+        *b = 0.0f;
+        break;
+    case 1:
+        *r = 0.0f;
+        *g = 1.0f;
+        *b = 0.0f;
+        break;
+    case 2:
+        *r = 0.0f;
+        *g = 0.0f;
+        *b = 1.0f;
+        break;
+    case 3:
+        *r = 1.0f;
+        *g = 1.0f;
+        *b = 0.0f;
+        break;
+    case 4:
+        *r = 0.0f;
+        *g = 1.0f;
+        *b = 1.0f;
+        break;
+    case 5:
+        *r = 1.0f;
+        *g = 0.0f;
+        *b = 1.0f;
+        break;
+    case 6:
+        *r = 0.7f;
+        *g = 0.7f;
+        *b = 0.7f;
+        break;
+    case 7:
+        *r = 1.0f;
+        *g = 1.0f;
+        *b = 1.0f;
+        break;
     }
 }
 
 static void get_point_projections(Camera camera, V3 const *vertices,
-                                  SDL_FPoint *projections, float *zs,
+                                  VertexInformation *projections,
                                   uint32_t count) {
     V3 camera_pos = {
         .rho = camera.rho, .theta = camera.theta, .phi = camera.phi};
@@ -441,130 +647,141 @@ static void get_point_projections(Camera camera, V3 const *vertices,
         V3 projected_3d = scale(corner_pos, scale_factor);
         V3 projected_2d, plane_x, plane_y;
 
+        V3 unit_components;
         double x_component, y_component, z_component;
+        float r, g, b;
 
         decompose(projected_3d, unit_center, &projected_2d);
         plane_y = decompose(projected_2d, y_dir, &plane_x);
 
         x_component = dot(plane_x, x_dir);
         y_component = dot(plane_y, y_dir);
-        z_component = -1.0f * dot(vertices[i], unit_center);
+        z_component = -1.0f * dot(projected_3d, unit_center);
 
-        projections[i] = (SDL_FPoint){
-            .x = x_component,
-            .y = y_component,
+        unit_components = as_unit(V3_of(x_component, y_component, z_component));
+
+        get_color_for_corner(i, &r, &g, &b);
+        projections[i] = (VertexInformation){
+            .x = (float)unit_components.x,
+            .y = (float)unit_components.y,
+            .z = (float)unit_components.z,
+            .r = r,
+            .g = g,
+            .b = b,
         };
+    }
+}
 
-        zs[i] = z_component;
+static void render(Application const *app) {
+    VertexInformation *vertex_points;
+    int const num_vertices = 8;
+
+    // TODO: Get the screen width and height and use a "pixels to meters" type
+    // thing like from Handmade Hero?
+
+    if (arena_begin(app->arena) == 0) {
+        vertex_points =
+            ARENA_PUSH_N(VertexInformation, app->arena, num_vertices);
+
+        get_point_projections(app->state.camera, cube_vertices, vertex_points,
+                              num_vertices);
 
         if (print_a_thing) {
-            printf("\n\tpre : x = %f,\ty = %f,\t z = %f\n\tproj: x = %f,\ty = "
-                   "%f\n",
-                   corner_pos.x, corner_pos.y, corner_pos.z, x_component,
-                   y_component);
-        }
-    }
-    if (print_a_thing) {
-        printf("y_dir = {\n"
-               "    .x = %f\n"
-               "    .y = %f\n"
-               "    .z = %f\n"
-               "}\n",
-               y_dir.x, y_dir.y, y_dir.z);
-    }
-}
+            printf("\nindices:\n");
+            for (uint32_t i = 0; i < num_indices; i += 3) {
+                printf("[%02d] = %d,\t", i + 0, indices[i + 0]);
+                printf("[%02d] = %d,\t", i + 1, indices[i + 1]);
+                printf("[%02d] = %d,\n", i + 2, indices[i + 2]);
+            }
 
-static inline double slope_of(SDL_FPoint target, SDL_FPoint base) {
-    return atan2(target.y - base.y, target.x - base.x);
-}
-
-static uint32_t ind_of_closest_angle(SDL_FPoint const *projections,
-                                     uint32_t count, uint32_t cur_index,
-                                     double from_angle) {
-    uint32_t cur_closest = (cur_index + 1) % count;
-    double cur_slope =
-        slope_of(projections[cur_closest], projections[cur_index]);
-
-    cur_slope = cur_slope < from_angle ? cur_slope + TWO_PI : cur_slope;
-    double distance = cur_slope - from_angle;
-
-    for (int i = 2; i < count; ++i) {
-        uint32_t vertex_ind = (cur_index + i) % count;
-        double slope =
-            slope_of(projections[vertex_ind], projections[cur_index]);
-
-        slope = slope < from_angle ? slope + TWO_PI : slope;
-        double new_distance = slope - from_angle;
-
-        if (new_distance < distance) {
-            cur_closest = vertex_ind;
-            distance = new_distance;
-        }
-    }
-
-    return cur_closest;
-}
-
-static void get_convex_hull(SDL_FPoint const *projections, int *is_hull,
-                            uint32_t count) {
-    uint32_t max_point_ind = 0;
-    uint32_t last_ind, cur_ind;
-    double cur_slope = PI_2;
-
-    // special cases?
-    if (count == 1) {
-        is_hull[0] = 1;
-        return;
-    } else if (count == 2) {
-        is_hull[0] = 1;
-        is_hull[1] = 1;
-        return;
-    }
-
-    for (int vertex_id = 0; vertex_id < count; ++vertex_id) {
-        is_hull[vertex_id] = 0;
-    }
-
-    for (int vertex_id = 1; vertex_id < count; ++vertex_id) {
-        if ((projections[vertex_id].x > projections[max_point_ind].x) ||
-            ((projections[vertex_id].x == projections[max_point_ind].x) &&
-             (projections[vertex_id].y > projections[max_point_ind].y))) {
-            max_point_ind = vertex_id;
-        }
-    }
-
-    last_ind = max_point_ind;
-
-    is_hull[last_ind] = 1;
-    cur_ind = ind_of_closest_angle(projections, count, last_ind, cur_slope);
-
-    while (cur_ind != max_point_ind) {
-        cur_slope = slope_of(projections[cur_ind], projections[last_ind]);
-        last_ind = cur_ind;
-
-        is_hull[last_ind] = 1;
-        cur_ind = ind_of_closest_angle(projections, count, last_ind, cur_slope);
-    }
-}
-
-static void get_visible_faces(int const *is_hull, float const *zs,
-                              uint32_t vertex_count, int const *face_indices,
-                              uint32_t face_index_count, int *face_visible,
-                              uint32_t face_count) {
-    uint32_t indices_per_face = face_index_count / face_count;
-
-    for (int face_id = 0; face_id < face_count; ++face_id) {
-        int count_vis = 0;
-
-        for (int index_id = 0; index_id < indices_per_face; ++index_id) {
-            uint32_t cur_index =
-                face_indices[indices_per_face * face_id + index_id];
-
-            if (is_hull[cur_index] || zs[cur_index] > 0) {
-                ++count_vis;
+            for (uint32_t i = 0; i < num_vertices; ++i) {
+                VertexInformation vp = vertex_points[i];
+                printf("[%d] = {\n"
+                       "  .x = %f, .y = %f, .z = %f,\n"
+                       "  .r = %f, .g = %f, .b = %f \n"
+                       "}\n",
+                       i, vp.x, vp.y, vp.z, vp.r, vp.g, vp.b);
             }
         }
 
-        face_visible[face_id] = count_vis == indices_per_face;
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        glBindVertexArray(app->gl_info.vao);
+
+        // fill vertex buffer
+        glBindBuffer(GL_ARRAY_BUFFER, app->gl_info.vbo[0]);
+        glBufferData(GL_ARRAY_BUFFER, num_vertices * sizeof(*vertex_points),
+                     (void const *)vertex_points, GL_STATIC_DRAW);
+
+        // fill index buffer
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, app->gl_info.ebo);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, num_indices * sizeof(*indices),
+                     (void const *)indices, GL_STATIC_DRAW);
+
+        // specify location of data within buffer
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(*vertex_points),
+                              (GLvoid const *)0);
+        glEnableVertexAttribArray(0);
+
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(*vertex_points),
+                              (GLvoid const *)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+
+        glDrawElements(GL_TRIANGLES, num_indices, GL_UNSIGNED_INT,
+                       (void const *)0);
+
+        SDL_GL_SwapWindow(app->window);
+
+        arena_pop(app->arena);
     }
+}
+
+int graphics_main(void) {
+    int ret = 0;
+    int sdl_init_ret, gl_init_ret;
+
+    Arena *arena = NULL;
+    SDL_Window *window = NULL;
+    Application_GL_Info gl_info;
+    Application app;
+
+    arena = alloc_arena();
+    CLEANUP_IF(arena == NULL, "Unable to allocate arena\n");
+
+    CLEANUP_IF((sdl_init_ret = sdl_init(&window)) != 0,
+               "Unable to init application with code %d\n", sdl_init_ret);
+
+    CLEANUP_IF((gl_init_ret = gl_init(window, &gl_info)) != 0,
+               "Unable to init GLEW and shaders with code %d\n", gl_init_ret);
+
+    app = (Application){
+        .window = window,
+        .gl_info = gl_info,
+        .last_ticks = SDL_GetTicks(),
+
+        .arena = arena,
+        .state = get_initial_state(),
+    };
+
+    if (arena_begin(arena) == 0) {
+        indices = ARENA_PUSH_N(int, arena, num_indices);
+
+        expand_vertices_to_triangles(face_indices, face_index_count,
+                                     square_indices_per_face, indices);
+
+        while (!app.state.should_close) {
+            StateUpdate s_update;
+
+            s_update = get_inputs(&app);
+            update(&app, s_update);
+            render(&app);
+        }
+
+        arena_pop(arena);
+    }
+
+cleanup:
+    app_cleanup(&app);
+
+    return ret;
 }

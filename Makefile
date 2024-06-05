@@ -24,7 +24,7 @@ SDL_CONFIG=$(shell sdl2-config --cflags --libs)
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CC) -o $@ $^ $(SDL_CONFIG) -lm
+	$(CC) -o $@ $^ $(SDL_CONFIG) -lm -lGLEW -lGLU -lGL
 
 $(BUILD)/%.o: $(SRC)/%.c | $(BUILD)
 	$(CC) $(CFLAGS) $(foreach D,$(INCLUDE),-I$(D)) -c -o $@ $< $(SDL_CONFIG)
