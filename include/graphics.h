@@ -4,6 +4,7 @@
 #include <GL/glew.h>
 #include <SDL2/SDL.h>
 
+#include "cube.h"
 #include "memory.h"
 
 // TODO: figure out how I want to deal with distances, pixels to meters, etc.
@@ -20,6 +21,7 @@ typedef struct {
     int should_rotate;
     int should_close;
     Camera camera;
+    Cube *cube;
 } State;
 
 typedef struct {

@@ -38,7 +38,7 @@ static Camera get_initial_camera(void) {
     };
 }
 
-static State get_initial_state(void) {
+static State get_initial_state(Cube *cube) {
     return (State){
         .theta_rot_dir = 1.0,
         .phi_rot_dir = 1.0,
@@ -46,6 +46,7 @@ static State get_initial_state(void) {
         .should_rotate = 0,
         .should_close = 0,
         .camera = get_initial_camera(),
+        .cube = cube,
     };
 }
 
@@ -151,17 +152,13 @@ static int gl_load_shader(GLuint *ui_shader, GLenum shader_type,
     return 0;
 }
 
-#define GEOM_SHADER_GOOD 0
-
 static int gl_link_program(GLuint *program, GLuint vertex_shader,
                            GLuint geometry_shader, GLuint fragment_shader) {
     GLint int_test_return;
 
     *program = glCreateProgram();
     glAttachShader(*program, vertex_shader);
-#if GEOM_SHADER_GOOD
     glAttachShader(*program, geometry_shader);
-#endif
     glAttachShader(*program, fragment_shader);
     glLinkProgram(*program);
 
@@ -271,7 +268,7 @@ static void debug_callback(uint32_t source, uint32_t type, uint32_t id,
     }
 }
 
-static void gl_debug_init() {
+static void gl_debug_init(void) {
     uint32_t unused_ids = 0;
 
     glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
@@ -309,13 +306,6 @@ static int gl_init(SDL_Window *window, Application_GL_Info *gl_info) {
                "Failed to initialize GLEW: %s\n",
                glewGetErrorString(glew_error));
 
-#if !GEOM_SHADER_GOOD
-    // TODO: remove these when bringing the geometry shader back
-    geom_shader = 0;
-    (void)geom_contents;
-    (void)geom_size;
-#endif
-
     // TODO: figure out if this should be +1 or -1
     SDL_GL_SetSwapInterval(-1);
 
@@ -334,10 +324,8 @@ static int gl_init(SDL_Window *window, Application_GL_Info *gl_info) {
     CLEANUP_IF(load_file(VERTEX_SHADER_NAME, &vert_size, &vert_contents) != 0,
                "Failed to load vertex shader contents\n");
 
-#if GEOM_SHADER_GOOD
     CLEANUP_IF(load_file(GEOMETRY_SHADER_NAME, &geom_size, &geom_contents) != 0,
                "Failed to load geometry shader contents\n");
-#endif
 
     CLEANUP_IF(load_file(FRAGMENT_SHADER_NAME, &frag_size, &frag_contents) != 0,
                "Failed to load fragment shader contents\n");
@@ -346,11 +334,9 @@ static int gl_init(SDL_Window *window, Application_GL_Info *gl_info) {
                               (GLchar const *)vert_contents) < 0,
                "Failed to load vertex shader\n");
 
-#if GEOM_SHADER_GOOD
     CLEANUP_IF(gl_load_shader(&geom_shader, GL_GEOMETRY_SHADER,
                               (GLchar const *)geom_contents) < 0,
                "Failed to load geometry shader\n");
-#endif
 
     CLEANUP_IF(gl_load_shader(&frag_shader, GL_FRAGMENT_SHADER,
                               (GLchar const *)frag_contents) < 0,
@@ -365,9 +351,7 @@ static int gl_init(SDL_Window *window, Application_GL_Info *gl_info) {
     free(geom_contents);
     free(frag_contents);
     glDeleteShader(vert_shader);
-#if GEOM_SHADER_GOOD
     glDeleteShader(geom_shader);
-#endif
     glDeleteShader(frag_shader);
 
     glUseProgram(gl_program);
@@ -568,7 +552,12 @@ static void update(Application *app, StateUpdate s_update) {
 }
 
 typedef struct {
-    float x, y, z, r, g, b;
+    // clipped position information
+    float x, y, z;
+    // color information
+    float r, g, b;
+    // "texture" information
+    float u, v, w;
 } VertexInformation;
 
 static void get_color_for_corner(int corner_ind, float *r, float *g, float *b) {
@@ -619,6 +608,8 @@ static void get_color_for_corner(int corner_ind, float *r, float *g, float *b) {
 static void get_point_projections(Camera camera, V3 const *vertices,
                                   VertexInformation *projections,
                                   uint32_t count) {
+    // TODO: move these calculations to the vertex shader so they can be done in
+    // parallel
     V3 camera_pos = {
         .rho = camera.rho, .theta = camera.theta, .phi = camera.phi};
 
@@ -668,6 +659,9 @@ static void get_point_projections(Camera camera, V3 const *vertices,
             .r = r,
             .g = g,
             .b = b,
+            .u = (float)(vertices[i].x + 1.0) / 2.0f,
+            .v = (float)(vertices[i].y + 1.0) / 2.0f,
+            .w = (float)(vertices[i].z + 1.0) / 2.0f,
         };
     }
 }
@@ -698,9 +692,14 @@ static void render(Application const *app) {
                 VertexInformation vp = vertex_points[i];
                 printf("[%d] = {\n"
                        "  .x = %f, .y = %f, .z = %f,\n"
-                       "  .r = %f, .g = %f, .b = %f \n"
+                       "  .r = %f, .g = %f, .b = %f,\n"
+                       "  .u = %f, .v = %f, .w = %f \n"
                        "}\n",
-                       i, vp.x, vp.y, vp.z, vp.r, vp.g, vp.b);
+                       i,                //
+                       vp.x, vp.y, vp.z, //
+                       vp.r, vp.g, vp.b, //
+                       vp.u, vp.v, vp.w  //
+                );
             }
         }
 
@@ -720,12 +719,16 @@ static void render(Application const *app) {
 
         // specify location of data within buffer
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(*vertex_points),
-                              (GLvoid const *)0);
+                              (GLvoid const *)(0 * sizeof(float)));
         glEnableVertexAttribArray(0);
 
         glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(*vertex_points),
                               (GLvoid const *)(3 * sizeof(float)));
         glEnableVertexAttribArray(1);
+
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(*vertex_points),
+                              (GLvoid const *)(6 * sizeof(float)));
+        glEnableVertexAttribArray(2);
 
         glDrawElements(GL_TRIANGLES, num_indices, GL_UNSIGNED_INT,
                        (void const *)0);
@@ -741,6 +744,7 @@ int graphics_main(void) {
     int sdl_init_ret, gl_init_ret;
 
     Arena *arena = NULL;
+    Cube *cube;
     SDL_Window *window = NULL;
     Application_GL_Info gl_info;
     Application app;
@@ -754,13 +758,15 @@ int graphics_main(void) {
     CLEANUP_IF((gl_init_ret = gl_init(window, &gl_info)) != 0,
                "Unable to init GLEW and shaders with code %d\n", gl_init_ret);
 
+    CLEANUP_IF((cube = new_cube(3)) == NULL, "Could not allocate cube\n");
+
     app = (Application){
         .window = window,
         .gl_info = gl_info,
         .last_ticks = SDL_GetTicks(),
 
         .arena = arena,
-        .state = get_initial_state(),
+        .state = get_initial_state(cube),
     };
 
     if (arena_begin(arena) == 0) {
