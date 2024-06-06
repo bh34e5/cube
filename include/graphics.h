@@ -8,7 +8,7 @@
 #include "memory.h"
 
 // TODO: figure out how I want to deal with distances, pixels to meters, etc.
-#define CAMERA_SCREEN_DIST 5.0
+#define CAMERA_SCREEN_DIST 5.0f
 typedef struct {
     double rho;
     double theta;

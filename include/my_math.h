@@ -10,11 +10,12 @@
 typedef struct {
     union {
         struct {
-            double x, y, z;
+            float x, y, z;
         };
         struct {
-            double rho, theta, phi;
+            float rho, theta, phi;
         };
+        float xyz[3];
     };
 } V3;
 
@@ -30,11 +31,11 @@ void expand_vertices_to_triangles(int const *indices, uint32_t index_count,
                                   uint32_t indices_per_face, int *triangles);
 
 V3 add(V3 lhs, V3 rhs);
-V3 scale(V3 v, double c);
+V3 scale(V3 v, float c);
 
-double dot(V3 lhs, V3 rhs);
+float dot(V3 lhs, V3 rhs);
 V3 cross(V3 lhs, V3 rhs);
-double length_sq(V3 v);
+float length_sq(V3 v);
 V3 as_unit(V3 v);
 V3 polar_to_rectangular(V3 v);
 

@@ -551,74 +551,17 @@ static void update(Application *app, StateUpdate s_update) {
     app->last_ticks = s_update.ticks;
 }
 
-typedef struct {
-    // clipped position information
-    float x, y, z;
-    // color information
-    float r, g, b;
-    // "texture" information
-    float u, v, w;
-} VertexInformation;
+static void render(Application const *app) {
+    // TODO: Get the screen width and height and use a "pixels to meters" type
+    // thing like from Handmade Hero?
 
-static void get_color_for_corner(int corner_ind, float *r, float *g, float *b) {
-    switch (corner_ind) {
-    case 0:
-        *r = 1.0f;
-        *g = 0.0f;
-        *b = 0.0f;
-        break;
-    case 1:
-        *r = 0.0f;
-        *g = 1.0f;
-        *b = 0.0f;
-        break;
-    case 2:
-        *r = 0.0f;
-        *g = 0.0f;
-        *b = 1.0f;
-        break;
-    case 3:
-        *r = 1.0f;
-        *g = 1.0f;
-        *b = 0.0f;
-        break;
-    case 4:
-        *r = 0.0f;
-        *g = 1.0f;
-        *b = 1.0f;
-        break;
-    case 5:
-        *r = 1.0f;
-        *g = 0.0f;
-        *b = 1.0f;
-        break;
-    case 6:
-        *r = 0.7f;
-        *g = 0.7f;
-        *b = 0.7f;
-        break;
-    case 7:
-        *r = 1.0f;
-        *g = 1.0f;
-        *b = 1.0f;
-        break;
-    }
-}
-
-static void get_point_projections(Camera camera, V3 const *vertices,
-                                  VertexInformation *projections,
-                                  uint32_t count) {
-    // TODO: move these calculations to the vertex shader so they can be done in
-    // parallel
+    Camera const *camera = &app->state.camera;
     V3 camera_pos = {
-        .rho = camera.rho, .theta = camera.theta, .phi = camera.phi};
+        .rho = camera->rho, .theta = camera->theta, .phi = camera->phi};
 
     V3 minus_center = polar_to_rectangular(camera_pos);
     V3 cube_center = scale(minus_center, -1.0);
-    V3 unit_center = as_unit(cube_center);
-    double d_over_rho = CAMERA_SCREEN_DIST / camera_pos.rho;
-    double dist_sq = length_sq(cube_center);
-    double numerator = d_over_rho * dist_sq;
+    float screen_cube_ratio = CAMERA_SCREEN_DIST / camera_pos.rho;
 
     V3 y_dir_polar = {
         .rho = 1,
@@ -628,89 +571,37 @@ static void get_point_projections(Camera camera, V3 const *vertices,
                                       : PI_2 - camera_pos.phi,
     };
     V3 y_dir = polar_to_rectangular(y_dir_polar);
-    V3 x_dir = cross(unit_center, y_dir);
-
-    for (int i = 0; i < count; ++i) {
-        V3 corner_pos = add(cube_center, vertices[i]);
-        double corner_dot_center = dot(corner_pos, cube_center);
-        double scale_factor = numerator / corner_dot_center;
-
-        V3 projected_3d = scale(corner_pos, scale_factor);
-        V3 projected_2d, plane_x, plane_y;
-
-        V3 unit_components;
-        double x_component, y_component, z_component;
-        float r, g, b;
-
-        decompose(projected_3d, unit_center, &projected_2d);
-        plane_y = decompose(projected_2d, y_dir, &plane_x);
-
-        x_component = dot(plane_x, x_dir);
-        y_component = dot(plane_y, y_dir);
-        z_component = -1.0f * dot(projected_3d, unit_center);
-
-        unit_components = as_unit(V3_of(x_component, y_component, z_component));
-
-        get_color_for_corner(i, &r, &g, &b);
-        projections[i] = (VertexInformation){
-            .x = (float)unit_components.x,
-            .y = (float)unit_components.y,
-            .z = (float)unit_components.z,
-            .r = r,
-            .g = g,
-            .b = b,
-            .u = (float)(vertices[i].x + 1.0) / 2.0f,
-            .v = (float)(vertices[i].y + 1.0) / 2.0f,
-            .w = (float)(vertices[i].z + 1.0) / 2.0f,
-        };
-    }
-}
-
-static void render(Application const *app) {
-    VertexInformation *vertex_points;
-    int const num_vertices = 8;
-
-    // TODO: Get the screen width and height and use a "pixels to meters" type
-    // thing like from Handmade Hero?
+    V3 x_dir = cross(as_unit(cube_center), y_dir);
 
     if (arena_begin(app->arena) == 0) {
-        vertex_points =
-            ARENA_PUSH_N(VertexInformation, app->arena, num_vertices);
-
-        get_point_projections(app->state.camera, cube_vertices, vertex_points,
-                              num_vertices);
-
-        if (print_a_thing) {
-            printf("\nindices:\n");
-            for (uint32_t i = 0; i < num_indices; i += 3) {
-                printf("[%02d] = %d,\t", i + 0, indices[i + 0]);
-                printf("[%02d] = %d,\t", i + 1, indices[i + 1]);
-                printf("[%02d] = %d,\n", i + 2, indices[i + 2]);
-            }
-
-            for (uint32_t i = 0; i < num_vertices; ++i) {
-                VertexInformation vp = vertex_points[i];
-                printf("[%d] = {\n"
-                       "  .x = %f, .y = %f, .z = %f,\n"
-                       "  .r = %f, .g = %f, .b = %f,\n"
-                       "  .u = %f, .v = %f, .w = %f \n"
-                       "}\n",
-                       i,                //
-                       vp.x, vp.y, vp.z, //
-                       vp.r, vp.g, vp.b, //
-                       vp.u, vp.v, vp.w  //
-                );
-            }
-        }
+        GLint uniform_index;
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // TODO: maybe write some wrappers for this?
+
+        uniform_index = glGetUniformLocation(app->gl_info.gl_program,
+                                             "view_information.x_dir");
+        glUniform3fv(uniform_index, 1, (GLfloat const *)x_dir.xyz);
+
+        uniform_index = glGetUniformLocation(app->gl_info.gl_program,
+                                             "view_information.y_dir");
+        glUniform3fv(uniform_index, 1, (GLfloat const *)y_dir.xyz);
+
+        uniform_index = glGetUniformLocation(app->gl_info.gl_program,
+                                             "view_information.cube_center");
+        glUniform3fv(uniform_index, 1, (GLfloat const *)cube_center.xyz);
+
+        uniform_index = glGetUniformLocation(
+            app->gl_info.gl_program, "view_information.screen_cube_ratio");
+        glUniform1f(uniform_index, screen_cube_ratio);
 
         glBindVertexArray(app->gl_info.vao);
 
         // fill vertex buffer
         glBindBuffer(GL_ARRAY_BUFFER, app->gl_info.vbo[0]);
-        glBufferData(GL_ARRAY_BUFFER, num_vertices * sizeof(*vertex_points),
-                     (void const *)vertex_points, GL_STATIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, cube_vert_count * sizeof(*cube_vertices),
+                     (void const *)cube_vertices, GL_STATIC_DRAW);
 
         // fill index buffer
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, app->gl_info.ebo);
@@ -718,17 +609,9 @@ static void render(Application const *app) {
                      (void const *)indices, GL_STATIC_DRAW);
 
         // specify location of data within buffer
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(*vertex_points),
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(*cube_vertices),
                               (GLvoid const *)(0 * sizeof(float)));
         glEnableVertexAttribArray(0);
-
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(*vertex_points),
-                              (GLvoid const *)(3 * sizeof(float)));
-        glEnableVertexAttribArray(1);
-
-        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(*vertex_points),
-                              (GLvoid const *)(6 * sizeof(float)));
-        glEnableVertexAttribArray(2);
 
         glDrawElements(GL_TRIANGLES, num_indices, GL_UNSIGNED_INT,
                        (void const *)0);

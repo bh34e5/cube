@@ -8,14 +8,14 @@
 #include "common.h"
 
 V3 const cube_vertices[8] = {
-    {.x = (+1.0), .y = (+1.0), .z = (+1.0)},
-    {.x = (-1.0), .y = (+1.0), .z = (+1.0)},
-    {.x = (-1.0), .y = (-1.0), .z = (+1.0)},
-    {.x = (+1.0), .y = (-1.0), .z = (+1.0)},
-    {.x = (+1.0), .y = (-1.0), .z = (-1.0)},
-    {.x = (-1.0), .y = (-1.0), .z = (-1.0)},
-    {.x = (-1.0), .y = (+1.0), .z = (-1.0)},
-    {.x = (+1.0), .y = (+1.0), .z = (-1.0)},
+    {.x = (+1.0f), .y = (+1.0f), .z = (+1.0f)},
+    {.x = (-1.0f), .y = (+1.0f), .z = (+1.0f)},
+    {.x = (-1.0f), .y = (-1.0f), .z = (+1.0f)},
+    {.x = (+1.0f), .y = (-1.0f), .z = (+1.0f)},
+    {.x = (+1.0f), .y = (-1.0f), .z = (-1.0f)},
+    {.x = (-1.0f), .y = (-1.0f), .z = (-1.0f)},
+    {.x = (-1.0f), .y = (+1.0f), .z = (-1.0f)},
+    {.x = (+1.0f), .y = (+1.0f), .z = (-1.0f)},
 };
 
 int const face_indices[6 * 4] = {
@@ -65,7 +65,7 @@ inline V3 add(V3 lhs, V3 rhs) {
     };
 }
 
-inline V3 scale(V3 v, double c) {
+inline V3 scale(V3 v, float c) {
     return (V3){
         .x = v.x * c,
         .y = v.y * c,
@@ -73,22 +73,22 @@ inline V3 scale(V3 v, double c) {
     };
 }
 
-inline double dot(V3 lhs, V3 rhs) {
+inline float dot(V3 lhs, V3 rhs) {
     return (lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z);
 }
 
 inline V3 cross(V3 lhs, V3 rhs) {
     return (V3){
-        .x = +1.0 * (lhs.y * rhs.z - lhs.z * rhs.y),
-        .y = -1.0 * (lhs.x * rhs.z - lhs.z * rhs.x),
-        .z = +1.0 * (lhs.x * rhs.y - lhs.y * rhs.x),
+        .x = +1.0f * (lhs.y * rhs.z - lhs.z * rhs.y),
+        .y = -1.0f * (lhs.x * rhs.z - lhs.z * rhs.x),
+        .z = +1.0f * (lhs.x * rhs.y - lhs.y * rhs.x),
     };
 }
 
-inline double length_sq(V3 v) { return dot(v, v); }
+inline float length_sq(V3 v) { return dot(v, v); }
 
 inline V3 as_unit(V3 v) {
-    double length_inv = 1.0 / sqrt(length_sq(v));
+    float length_inv = 1.0f / sqrt(length_sq(v));
     return (V3){
         .x = v.x * length_inv,
         .y = v.y * length_inv,
@@ -103,11 +103,11 @@ inline V3 polar_to_rectangular(V3 v) {
 }
 
 V3 decompose(V3 target, V3 dir, V3 *perp) {
-    double dotted = dot(target, dir);
+    float dotted = dot(target, dir);
     V3 res = scale(dir, dotted);
 
     if (perp != NULL) {
-        V3 diff = add(target, scale(res, -1.0));
+        V3 diff = add(target, scale(res, -1.0f));
         *perp = diff;
     }
 

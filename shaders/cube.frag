@@ -1,7 +1,6 @@
 #version 420 core
 
 in vec3 col;
-
 flat in int face_num;
 
 out vec4 v4_frag_out;
