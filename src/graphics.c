@@ -26,9 +26,10 @@ static int print_a_thing = 0;
 #define FRAMES 60.0
 static double target_mspf = 1000.0 / FRAMES;
 
+#define FACES 6
 static int *indices;
 static int const square_indices_per_face = 4;
-static int const num_indices = 6 * VERTEX_COUNT_TO_TRIANGLE_COUNT(4);
+static int const num_indices = FACES * VERTEX_COUNT_TO_TRIANGLE_COUNT(4);
 
 static Camera get_initial_camera(void) {
     return (Camera){
@@ -297,7 +298,7 @@ static int gl_init(SDL_Window *window, Application_GL_Info *gl_info) {
     char *frag_contents = NULL;
     long vert_size, geom_size, frag_size;
 
-    GLuint vao, vbo[2], ebo;
+    GLuint vao, vbo[2], ebo, texture;
 
     context = SDL_GL_CreateContext(window);
     CLEANUP_IF(context == NULL, "Could not create OpenGL context\n");
@@ -359,6 +360,7 @@ static int gl_init(SDL_Window *window, Application_GL_Info *gl_info) {
     glGenVertexArrays(1, &vao);
     glGenBuffers(2, &vbo[0]);
     glGenBuffers(1, &ebo);
+    glGenTextures(1, &texture);
 
     glBindVertexArray(vao);
 
@@ -369,14 +371,36 @@ static int gl_init(SDL_Window *window, Application_GL_Info *gl_info) {
         .vao = 0,
         .vbo = {0},
         .ebo = 0,
+        .texture = 0,
     };
     gl_info->vao = vao;
     gl_info->vbo[0] = vbo[0];
     gl_info->vbo[1] = vbo[1];
     gl_info->ebo = ebo;
+    gl_info->texture = texture;
 
 cleanup:
     if (ret != 0) {
+        if (texture != 0) {
+            glDeleteTextures(1, &texture);
+        }
+
+        if (ebo != 0) {
+            glDeleteBuffers(1, &ebo);
+        }
+
+        if (vbo[0] != 0) {
+            glDeleteBuffers(2, &vbo[0]);
+        }
+
+        if (vao != 0) {
+            glDeleteVertexArrays(1, &vao);
+        }
+
+        if (gl_program != 0) {
+            glDeleteProgram(gl_program);
+        }
+
         if (frag_contents != NULL) {
             free(frag_contents);
         }
@@ -394,6 +418,10 @@ cleanup:
 }
 
 static void app_cleanup(Application *app) {
+    if (app->gl_info.texture != 0) {
+        glDeleteTextures(1, &app->gl_info.texture);
+    }
+
     if (app->gl_info.ebo != 0) {
         glDeleteBuffers(1, &app->gl_info.ebo);
     }
@@ -551,6 +579,60 @@ static void update(Application *app, StateUpdate s_update) {
     app->last_ticks = s_update.ticks;
 }
 
+typedef struct {
+    unsigned char r, g, b;
+} Color;
+
+static void write_color_for_face(void *v_buf, FaceColor fc) {
+    Color *buf = (Color *)v_buf;
+
+    Color fc_color[FC_Count] = {
+        [FC_White] = {.r = 0xFF, .g = 0xFF, .b = 0xFF},
+        [FC_Green] = {.r = 0x00, .g = 0xFF, .b = 0x00},
+        [FC_Red] = {.r = 0xFF, .g = 0x00, .b = 0x00},
+        [FC_Blue] = {.r = 0x00, .g = 0x00, .b = 0xFF},
+        [FC_Orange] = {.r = 0x80, .g = 0x80, .b = 0x80},
+        [FC_Yellow] = {.r = 0xFF, .g = 0xFF, .b = 0x00},
+    };
+
+    *buf = fc_color[fc];
+}
+
+static void create_texture_from_cube(Application const *app, Color **p_texture,
+                                     uint32_t *p_width, uint32_t *p_height) {
+    uint32_t side_count = get_side_count(app->state.cube);
+
+    uint32_t item_size = sizeof(Color);
+    uint32_t stride = 4 * side_count;
+    uint32_t height = 3 * side_count;
+    uint32_t rect_size = stride * height;
+
+    Spacing spacing = {
+        .item_size = item_size,
+        .hgap = 0,
+        .vgap = 0,
+        .trailing_v = 0,
+    };
+
+    Color clear_color = {.r = 0xFF, .g = 0x00, .b = 0xFF};
+    Color *texture = ARENA_PUSH_N(Color, app->arena, rect_size * item_size);
+
+    if (texture == NULL) {
+        return;
+    }
+
+    for (uint32_t i = 0; i < rect_size; ++i) {
+        texture[i] = clear_color;
+    }
+
+    generic_write_cube(app->state.cube, (void *)texture, spacing,
+                       write_color_for_face);
+
+    *p_texture = texture;
+    *p_width = stride;
+    *p_height = height;
+}
+
 static void render(Application const *app) {
     // TODO: Get the screen width and height and use a "pixels to meters" type
     // thing like from Handmade Hero?
@@ -573,10 +655,23 @@ static void render(Application const *app) {
     V3 y_dir = polar_to_rectangular(y_dir_polar);
     V3 x_dir = cross(as_unit(cube_center), y_dir);
 
+    Color *texture = NULL;
+    uint32_t tex_width, tex_height;
+
     if (arena_begin(app->arena) == 0) {
         GLint uniform_index;
 
+        create_texture_from_cube(app, &texture, &tex_width, &tex_height);
+        if (texture == NULL) {
+            goto skip_render;
+        }
+
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        glActiveTexture(GL_TEXTURE0);
+        uniform_index =
+            glGetUniformLocation(app->gl_info.gl_program, "cube_texture");
+        glUniform1i(uniform_index, 0);
 
         // TODO: maybe write some wrappers for this?
 
@@ -598,6 +693,11 @@ static void render(Application const *app) {
 
         glBindVertexArray(app->gl_info.vao);
 
+        glBindTexture(GL_TEXTURE_2D, app->gl_info.texture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, tex_width, tex_height, 0, GL_RGB,
+                     GL_UNSIGNED_BYTE, texture);
+        glGenerateMipmap(GL_TEXTURE_2D);
+
         // fill vertex buffer
         glBindBuffer(GL_ARRAY_BUFFER, app->gl_info.vbo[0]);
         glBufferData(GL_ARRAY_BUFFER, cube_vert_count * sizeof(*cube_vertices),
@@ -618,6 +718,7 @@ static void render(Application const *app) {
 
         SDL_GL_SwapWindow(app->window);
 
+    skip_render:
         arena_pop(app->arena);
     }
 }

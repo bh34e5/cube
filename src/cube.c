@@ -52,6 +52,8 @@ Cube *new_cube(uint32_t sides) {
     return res;
 }
 
+inline uint32_t get_side_count(Cube *cube) { return cube->sides; }
+
 void free_cube(Cube *cube) {
     if (cube == NULL)
         return;
@@ -149,9 +151,61 @@ void set_orientation(Cube *cube, int orientation) {
     cube->orientation = orientation;
 }
 
-static inline void write_face_to_buf(FaceColor *face, char *buf,
-                                     uint32_t stride, uint32_t sides,
-                                     int orientation) {
+void generic_write_cube(Cube *cube, void *buf, Spacing spacing,
+                        WriterFunction write_func) {
+    uint32_t sides = cube->sides;
+    uint32_t colors_per_side = sides * sides;
+
+    uint32_t item_size = spacing.item_size;
+    uint32_t hgap = spacing.hgap;
+    uint32_t vgap = spacing.vgap;
+    uint32_t trailing_v = spacing.trailing_v;
+    uint32_t stride = (4 * sides + 3 * vgap + trailing_v);
+
+#define HOR ((sides + hgap) * stride)
+#define VER (sides + vgap)
+
+    uint32_t starts[FC_Count] = {
+        [FC_White] = (0 * HOR + 1 * VER) * item_size,
+        [FC_Green] = (1 * HOR + 0 * VER) * item_size,
+        [FC_Red] = (1 * HOR + 1 * VER) * item_size,
+        [FC_Blue] = (1 * HOR + 2 * VER) * item_size,
+        [FC_Orange] = (1 * HOR + 3 * VER) * item_size,
+        [FC_Yellow] = (2 * HOR + 1 * VER) * item_size,
+    };
+
+#undef VER
+#undef HOR
+
+    int print_dir[FC_Count] = {
+        [FC_White] = 2,  //
+        [FC_Green] = 0,  //
+        [FC_Red] = 3,    //
+        [FC_Blue] = 2,   //
+        [FC_Orange] = 3, //
+        [FC_Yellow] = 2, //
+    };
+
+    for (FaceColor fc = 0; fc < FC_Count; ++fc) {
+        FaceColor *face = cube->squares + (colors_per_side * fc);
+        char *buf_start = (char *)buf + starts[fc];
+        int dir = print_dir[fc];
+
+        for (uint32_t r = 0; r < sides; ++r) {
+            for (uint32_t c = 0; c < sides; ++c) {
+                FaceColor fc = get_at_rc(face, sides, r, c, dir);
+
+                uint32_t index = (r * stride) + c;
+                void *location = (void *)(buf_start + (item_size * index));
+                write_func(location, fc);
+            }
+        }
+    }
+}
+
+static void print_write_function(void *v_buf, FaceColor fc) {
+    char *buf = (char *)v_buf;
+
     char fc_name[FC_Count] = {
         [FC_White] = 'W',  //
         [FC_Green] = 'G',  //
@@ -161,12 +215,7 @@ static inline void write_face_to_buf(FaceColor *face, char *buf,
         [FC_Yellow] = 'Y', //
     };
 
-    for (uint32_t r = 0; r < sides; ++r) {
-        for (uint32_t c = 0; c < sides; ++c) {
-            FaceColor fc = get_at_rc(face, sides, r, c, orientation);
-            buf[(r * stride) + c] = fc_name[fc];
-        }
-    }
+    *buf = fc_name[fc];
 }
 
 void print_cube(Cube *cube) {
@@ -186,28 +235,16 @@ void print_cube(Cube *cube) {
      */
 
     uint32_t sides = cube->sides;
-    uint32_t colors_per_side = sides * sides;
 
     uint32_t stride = (4 * sides + 3) + 1; // +1 to account for newline
     uint32_t height = (3 * sides + 2);
     uint32_t string_buf_size = stride * height;
 
-    uint32_t starts[FC_Count] = {
-        [FC_White] = 0 * (sides + 1) * stride + 1 * (sides + 1),
-        [FC_Green] = 1 * (sides + 1) * stride + 0 * (sides + 1),
-        [FC_Red] = 1 * (sides + 1) * stride + 1 * (sides + 1),
-        [FC_Blue] = 1 * (sides + 1) * stride + 2 * (sides + 1),
-        [FC_Orange] = 1 * (sides + 1) * stride + 3 * (sides + 1),
-        [FC_Yellow] = 2 * (sides + 1) * stride + 1 * (sides + 1),
-    };
-
-    int print_dir[FC_Count] = {
-        [FC_White] = 2,  //
-        [FC_Green] = 0,  //
-        [FC_Red] = 3,    //
-        [FC_Blue] = 2,   //
-        [FC_Orange] = 3, //
-        [FC_Yellow] = 2, //
+    Spacing spacing = {
+        .item_size = sizeof(char),
+        .hgap = 1,
+        .vgap = 1,
+        .trailing_v = 1,
     };
 
     // TODO: make this allocation persist and grow when necessary so there isn't
@@ -223,12 +260,7 @@ void print_cube(Cube *cube) {
     }
     buf[string_buf_size] = '\0';
 
-    for (FaceColor fc = 0; fc < FC_Count; ++fc) {
-        FaceColor *face = cube->squares + (colors_per_side * fc);
-        char *buf_start = buf + starts[fc];
-        int dir = print_dir[fc];
-        write_face_to_buf(face, buf_start, stride, sides, dir);
-    }
+    generic_write_cube(cube, (void *)buf, spacing, print_write_function);
 
     printf("%s", buf);
 

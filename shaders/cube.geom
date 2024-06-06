@@ -3,6 +3,7 @@
 in vec3 tex[];
 
 flat out int face_num;
+out vec3 tex2;
 
 layout (triangles) in;
 layout (triangle_strip, max_vertices = 3) out;

@@ -38,7 +38,7 @@ typedef struct {
 typedef struct {
     SDL_GLContext *gl_context;
     GLuint gl_program;
-    GLuint vao, vbo[2], ebo;
+    GLuint vao, vbo[2], ebo, texture;
 } Application_GL_Info;
 
 typedef struct {
