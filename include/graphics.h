@@ -18,18 +18,28 @@ typedef struct {
 typedef struct {
     int theta_rot_dir, phi_rot_dir;
 
+    int rotate_depth;
+
     int should_rotate;
     int should_close;
     Camera camera;
     Cube *cube;
 } State;
 
+// TODO: turn these into bit field things..
 typedef struct {
     int toggle_rotate;
     int toggle_close;
     int camera_rho_dir;
     int camera_theta_dir;
     int camera_phi_dir;
+    int rotate_front;
+
+    int set_face;
+    FaceColor target_face;
+
+    int set_depth;
+    int rotate_depth;
 
     double delta_time;
     Uint32 ticks;

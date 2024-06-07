@@ -19,12 +19,12 @@ V3 const cube_vertices[8] = {
 };
 
 int const face_indices[6 * 4] = {
-    0, 3, 2, 1, //
-    2, 3, 4, 5, //
-    1, 2, 5, 6, //
-    0, 1, 6, 7, //
-    4, 7, 6, 5, //
-    0, 7, 4, 3, //
+    2, 1, 0, 3, // white
+    4, 3, 0, 7, // red
+    6, 7, 0, 1, // blue
+    5, 6, 1, 2, // orange
+    5, 2, 3, 4, // green
+    5, 4, 7, 6, // yellow
 };
 
 int const cube_vert_count = ARR_SIZE(cube_vertices);

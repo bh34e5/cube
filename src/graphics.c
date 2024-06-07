@@ -44,6 +44,8 @@ static State get_initial_state(Cube *cube) {
         .theta_rot_dir = 1.0,
         .phi_rot_dir = 1.0,
 
+        .rotate_depth = 1,
+
         .should_rotate = 0,
         .should_close = 0,
         .camera = get_initial_camera(),
@@ -473,9 +475,67 @@ static StateUpdate get_inputs(Application const *app) {
                 s_update.toggle_close = 1;
             }
 
+            // quit the application on Q
+            if (keys[SDL_SCANCODE_R] == 1) {
+                s_update.rotate_front = 1;
+            }
+
             // print the current status
             if (keys[SDL_SCANCODE_P] == 1) {
                 print_a_thing = 1;
+            }
+
+            // update the facing direction or the rotation depth depending on
+            // the S key being pressed
+            if (keys[SDL_SCANCODE_S] == 1) {
+                if (keys[SDL_SCANCODE_0] == 1) {
+                    s_update.set_face = 1;
+                    s_update.target_face = 0;
+                } else if (keys[SDL_SCANCODE_1] == 1) {
+                    s_update.set_face = 1;
+                    s_update.target_face = 1;
+                } else if (keys[SDL_SCANCODE_2] == 1) {
+                    s_update.set_face = 1;
+                    s_update.target_face = 2;
+                } else if (keys[SDL_SCANCODE_3] == 1) {
+                    s_update.set_face = 1;
+                    s_update.target_face = 3;
+                } else if (keys[SDL_SCANCODE_4] == 1) {
+                    s_update.set_face = 1;
+                    s_update.target_face = 4;
+                } else if (keys[SDL_SCANCODE_5] == 1) {
+                    s_update.set_face = 1;
+                    s_update.target_face = 5;
+                }
+            } else {
+                if (keys[SDL_SCANCODE_1] == 1) {
+                    s_update.set_depth = 1;
+                    s_update.rotate_depth = 1;
+                } else if (keys[SDL_SCANCODE_2] == 1) {
+                    s_update.set_depth = 1;
+                    s_update.rotate_depth = 2;
+                } else if (keys[SDL_SCANCODE_3] == 1) {
+                    s_update.set_depth = 1;
+                    s_update.rotate_depth = 3;
+                } else if (keys[SDL_SCANCODE_4] == 1) {
+                    s_update.set_depth = 1;
+                    s_update.rotate_depth = 4;
+                } else if (keys[SDL_SCANCODE_5] == 1) {
+                    s_update.set_depth = 1;
+                    s_update.rotate_depth = 5;
+                } else if (keys[SDL_SCANCODE_6] == 1) {
+                    s_update.set_depth = 1;
+                    s_update.rotate_depth = 6;
+                } else if (keys[SDL_SCANCODE_7] == 1) {
+                    s_update.set_depth = 1;
+                    s_update.rotate_depth = 7;
+                } else if (keys[SDL_SCANCODE_8] == 1) {
+                    s_update.set_depth = 1;
+                    s_update.rotate_depth = 8;
+                } else if (keys[SDL_SCANCODE_9] == 1) {
+                    s_update.set_depth = 1;
+                    s_update.rotate_depth = 9;
+                }
             }
 
             // start / stop automatic rotation
@@ -492,16 +552,16 @@ static StateUpdate get_inputs(Application const *app) {
 
             // move the camera up and down
             if (keys[SDL_SCANCODE_DOWN] == 1) {
-                s_update.camera_phi_dir = -1;
-            } else if (keys[SDL_SCANCODE_UP] == 1) {
                 s_update.camera_phi_dir = 1;
+            } else if (keys[SDL_SCANCODE_UP] == 1) {
+                s_update.camera_phi_dir = -1;
             }
 
             // move the camera left and right
             if (keys[SDL_SCANCODE_LEFT] == 1) {
-                s_update.camera_theta_dir = -1;
-            } else if (keys[SDL_SCANCODE_RIGHT] == 1) {
                 s_update.camera_theta_dir = 1;
+            } else if (keys[SDL_SCANCODE_RIGHT] == 1) {
+                s_update.camera_theta_dir = -1;
             }
         } break;
         }
@@ -576,6 +636,21 @@ static void update(Application *app, StateUpdate s_update) {
         state->should_rotate = 1 - state->should_rotate;
     }
 
+    if (s_update.set_depth) {
+        app->state.rotate_depth = s_update.rotate_depth;
+    }
+
+    if (s_update.rotate_front) {
+        rotate_front(app->state.cube, app->state.rotate_depth - 1, 1);
+    }
+
+    if (s_update.set_face) {
+        FaceColor clamped_fc =
+            DANGEROUS_CLAMP(0, s_update.target_face, FC_Count - 1);
+
+        set_facing_side(app->state.cube, clamped_fc);
+    }
+
     app->last_ticks = s_update.ticks;
 }
 
@@ -591,7 +666,7 @@ static void write_color_for_face(void *v_buf, FaceColor fc) {
         [FC_Green] = {.r = 0x00, .g = 0xFF, .b = 0x00},
         [FC_Red] = {.r = 0xFF, .g = 0x00, .b = 0x00},
         [FC_Blue] = {.r = 0x00, .g = 0x00, .b = 0xFF},
-        [FC_Orange] = {.r = 0x80, .g = 0x80, .b = 0x80},
+        [FC_Orange] = {.r = 0xFF, .g = 0xA5, .b = 0x00},
         [FC_Yellow] = {.r = 0xFF, .g = 0xFF, .b = 0x00},
     };
 
@@ -604,7 +679,7 @@ static void create_texture_from_cube(Application const *app, Color **p_texture,
 
     uint32_t item_size = sizeof(Color);
     uint32_t stride = 4 * side_count;
-    uint32_t height = 3 * side_count;
+    uint32_t height = 4 * side_count;
     uint32_t rect_size = stride * height;
 
     Spacing spacing = {
@@ -672,6 +747,10 @@ static void render(Application const *app) {
         uniform_index =
             glGetUniformLocation(app->gl_info.gl_program, "cube_texture");
         glUniform1i(uniform_index, 0);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
 
         // TODO: maybe write some wrappers for this?
 
@@ -742,7 +821,7 @@ int graphics_main(void) {
     CLEANUP_IF((gl_init_ret = gl_init(window, &gl_info)) != 0,
                "Unable to init GLEW and shaders with code %d\n", gl_init_ret);
 
-    CLEANUP_IF((cube = new_cube(3)) == NULL, "Could not allocate cube\n");
+    CLEANUP_IF((cube = new_cube(5)) == NULL, "Could not allocate cube\n");
 
     app = (Application){
         .window = window,
