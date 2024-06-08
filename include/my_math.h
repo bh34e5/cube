@@ -21,6 +21,9 @@ typedef struct {
 
 #define V3_of(x_v, y_v, z_v) ((V3){.x = (x_v), .y = (y_v), .z = (z_v)})
 
+#define CUBE_FACES 6
+#define SQUARE_CORNERS 4
+
 extern V3 const cube_vertices[8];
 extern int const face_indices[24];
 extern int const cube_vert_count;
@@ -32,6 +35,8 @@ void expand_vertices_to_triangles(int const *indices, uint32_t index_count,
 
 V3 add(V3 lhs, V3 rhs);
 V3 scale(V3 v, float c);
+
+V3 v_lerp(V3 l, float factor, V3 r);
 
 float dot(V3 lhs, V3 rhs);
 V3 cross(V3 lhs, V3 rhs);

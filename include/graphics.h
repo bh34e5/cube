@@ -6,6 +6,7 @@
 
 #include "cube.h"
 #include "memory.h"
+#include "my_math.h"
 
 // TODO: figure out how I want to deal with distances, pixels to meters, etc.
 #define CAMERA_SCREEN_DIST 5.0f
@@ -26,19 +27,20 @@ typedef struct {
     Cube *cube;
 } State;
 
-// TODO: turn these into bit field things..
 typedef struct {
-    int toggle_rotate;
-    int toggle_close;
+    struct {
+        uint32_t toggle_rotate : 1;
+        uint32_t toggle_close : 1;
+        uint32_t rotate_front : 1;
+        uint32_t set_face : 1;
+        uint32_t set_depth : 1;
+    };
+
     int camera_rho_dir;
     int camera_theta_dir;
     int camera_phi_dir;
-    int rotate_front;
 
-    int set_face;
     FaceColor target_face;
-
-    int set_depth;
     int rotate_depth;
 
     double delta_time;
@@ -46,9 +48,25 @@ typedef struct {
 } StateUpdate;
 
 typedef struct {
+    V3 position;
+    float face_num;
+} VertexInformation;
+
+typedef struct {
+    GLuint vao, vbo, ebo, texture;
+
+    VertexInformation *info;
+    uint32_t vertex_count;
+
+    int *indices;
+    uint32_t index_count;
+} CubeModel;
+
+typedef struct {
     SDL_GLContext *gl_context;
     GLuint gl_program;
-    GLuint vao, vbo[2], ebo, texture;
+
+    CubeModel cube_model;
 } Application_GL_Info;
 
 typedef struct {

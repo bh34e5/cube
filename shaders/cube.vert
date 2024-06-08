@@ -1,8 +1,10 @@
 #version 420 core
 
 layout (location = 0) in vec3 v3_pos;
+layout (location = 1) in float in_face_num;
 
 out vec3 tex;
+out flat int face_num;
 
 struct ViewInformation
 {
@@ -43,9 +45,11 @@ void main()
 
   gl_Position = vec4(res, 1.0f);
   tex = 0.5f * (v3_pos + vec3(1.0f));
+  face_num = int(in_face_num);
 }
 
-vec3 decompose(vec3 target, vec3 x_dir, vec3 y_dir, vec3 z_dir) {
+vec3 decompose(vec3 target, vec3 x_dir, vec3 y_dir, vec3 z_dir)
+{
     float dotted_x = dot(target, x_dir);
     float dotted_y = dot(target, y_dir);
     float dotted_z = dot(target, z_dir);

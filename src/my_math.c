@@ -18,7 +18,7 @@ V3 const cube_vertices[8] = {
     {.x = (+1.0f), .y = (+1.0f), .z = (-1.0f)},
 };
 
-int const face_indices[6 * 4] = {
+int const face_indices[CUBE_FACES * SQUARE_CORNERS] = {
     2, 1, 0, 3, // white
     4, 3, 0, 7, // red
     6, 7, 0, 1, // blue
@@ -36,6 +36,8 @@ void expand_vertices_to_triangles(int const *indices, uint32_t index_count,
     uint32_t triangle_indices_per_face =
         VERTEX_COUNT_TO_TRIANGLE_COUNT(indices_per_face);
 
+    uint32_t triangles_per_face = triangle_indices_per_face / 3;
+
     for (uint32_t face_id = 0; face_id < face_count; ++face_id) {
         int f_base = face_id * indices_per_face;
         int tf_base = face_id * triangle_indices_per_face;
@@ -45,7 +47,7 @@ void expand_vertices_to_triangles(int const *indices, uint32_t index_count,
         triangles[tf_base + 1] = indices[f_base + 1];
         triangles[tf_base + 2] = indices[f_base + 2];
 
-        for (int i = 1; i < index_count; ++i) {
+        for (int i = 1; i < triangles_per_face; ++i) {
             int offset = 3 * i;
 
             triangles[tf_base + offset + 0] = indices[f_base + 0];
@@ -70,6 +72,20 @@ inline V3 scale(V3 v, float c) {
         .x = v.x * c,
         .y = v.y * c,
         .z = v.z * c,
+    };
+}
+
+float f_lerp(float a, float factor, float b) { return a + (b - a) * factor; }
+
+inline V3 v_lerp(V3 l, float factor, V3 r) {
+    DCHECK(factor >= 0.0f && factor <= 1.0f,
+           "Expected lerp factor to be in the range 0.0f to 1.0f. Got %f\n",
+           factor);
+
+    return (V3){
+        .x = f_lerp(l.x, factor, r.x),
+        .y = f_lerp(l.y, factor, r.y),
+        .z = f_lerp(l.z, factor, r.z),
     };
 }
 

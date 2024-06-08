@@ -1,7 +1,7 @@
 #version 420 core
 
-in vec3 tex2;
-flat in int face_num;
+in vec3 tex;
+in flat int face_num;
 
 out vec4 v4_frag_out;
 
@@ -14,7 +14,7 @@ vec2 ver_flip(vec2 i);
 
 void main()
 {
-  vec2 tex_coord = get_v2_from_tex(tex2, face_num) / 4 + get_base(face_num);
+  vec2 tex_coord = get_v2_from_tex(tex, face_num) / 4 + get_base(face_num);
   v4_frag_out = texture(cube_texture, tex_coord);
 }
 
