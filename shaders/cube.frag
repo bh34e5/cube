@@ -7,6 +7,7 @@ out vec4 v4_frag_out;
 
 uniform sampler2D cube_texture;
 
+float get_color_scale(vec2 tex_coord);
 vec2 get_base(int fn);
 vec2 get_v2_from_tex(vec3 t, int fn);
 vec2 hor_flip(vec2 i);
@@ -19,11 +20,16 @@ uniform float side_count;
 void main()
 {
   vec2 tex_coord = get_v2_from_tex(tex, face_num) / 4 + get_base(face_num);
-
-  // TODO: consider moving this coloring into the shader
-  vec2 factors = round(pow(abs(sin(side_count*4*PI*tex_coord)), vec2(1.0/3.0)));
-  float factor = min(factors.x, factors.y);
+  float factor = get_color_scale(tex_coord);
   v4_frag_out = vec4(factor * texture(cube_texture, tex_coord).xyz, 1.0);
+}
+
+float get_color_scale(vec2 tex_coord) {
+  vec2 foo = fract(tex_coord * side_count * 4.0);
+  vec2 bar = abs(1.0 - 2.0 * foo);
+  float m = max(bar.x, bar.y);
+
+  return m > 0.9 ? 0.0 : 1.0;
 }
 
 vec2 get_base(int fn)
