@@ -12,10 +12,18 @@ vec2 get_v2_from_tex(vec3 t, int fn);
 vec2 hor_flip(vec2 i);
 vec2 ver_flip(vec2 i);
 
+#define PI 3.14159265
+
+uniform float side_count;
+
 void main()
 {
   vec2 tex_coord = get_v2_from_tex(tex, face_num) / 4 + get_base(face_num);
-  v4_frag_out = texture(cube_texture, tex_coord);
+
+  // TODO: consider moving this coloring into the shader
+  vec2 factors = round(pow(abs(sin(side_count*4*PI*tex_coord)), vec2(1.0/3.0)));
+  float factor = min(factors.x, factors.y);
+  v4_frag_out = vec4(factor * texture(cube_texture, tex_coord).xyz, 1.0);
 }
 
 vec2 get_base(int fn)

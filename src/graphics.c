@@ -69,7 +69,8 @@ static int sdl_init(SDL_Window **window) {
 
     *window = SDL_CreateWindow("Rubik's Cube", SDL_WINDOWPOS_CENTERED,
                                SDL_WINDOWPOS_CENTERED, INIT_WIDTH, INIT_HEIGHT,
-                               SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
+                               SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN |
+                                   SDL_WINDOW_RESIZABLE);
 
     CLEANUP_IF(*window == NULL, "Failed to create window\n");
 
@@ -628,6 +629,9 @@ static void render(Application const *app) {
         uniform_index = glGetUniformLocation(
             gl_program, "view_information.screen_cube_ratio");
         glUniform1f(uniform_index, screen_cube_ratio);
+
+        uniform_index = glGetUniformLocation(gl_program, "side_count");
+        glUniform1f(uniform_index, (float)get_side_count(app->state.cube));
 
         glBindVertexArray(cube_model->vao);
 
