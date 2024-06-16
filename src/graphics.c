@@ -198,7 +198,6 @@ static int gl_init(SDL_Window *window, Application_GL_Info *gl_info) {
     SDL_GL_SetSwapInterval(-1);
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glFrontFace(GL_CW);
     glCullFace(GL_BACK);
     glEnable(GL_CULL_FACE);
     glEnable(GL_DEPTH_TEST);    // TODO: what is this?
