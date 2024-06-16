@@ -17,7 +17,7 @@ struct ViewInformation
 
 uniform ViewInformation view_information;
 
-vec3 decompose(vec3 target, vec3 x_dir, vec3 y_dir, vec3 z_dir);
+vec2 decompose(vec3 target, vec3 x_dir, vec3 y_dir);
 
 void main()
 {
@@ -25,34 +25,34 @@ void main()
 
   vec3 x_dir = view_information.x_dir;
   vec3 y_dir = view_information.y_dir;
-  vec3 z_dir = normalize(cube_center);
 
   vec3 corner_pos = cube_center + v3_pos;
 
-  float scale_factor =
-      (view_information.screen_cube_ratio * dot(z_dir, z_dir))
-      / dot(corner_pos, z_dir);
+  float cube_center_dist_sq = dot(cube_center, cube_center);
+  float numerator =
+    view_information.screen_cube_ratio * cube_center_dist_sq;
+  float corner_dot_center = dot(corner_pos, cube_center);
+  float scale_factor = numerator / corner_dot_center;
 
   vec3 projected = scale_factor * corner_pos;
 
-  vec3 components = decompose(
+  vec2 components = decompose(
           projected,
           normalize(x_dir),
-          normalize(y_dir),
-          normalize(z_dir));
+          normalize(y_dir));
 
-  vec3 res = normalize(components);
+  float depth = dot(projected, cube_center) / cube_center_dist_sq;
+  vec3 res = vec3(components, depth);
 
   gl_Position = vec4(res, 1.0f);
   tex = 0.5f * (v3_pos + vec3(1.0f));
   face_num = int(in_face_num);
 }
 
-vec3 decompose(vec3 target, vec3 x_dir, vec3 y_dir, vec3 z_dir)
+vec2 decompose(vec3 target, vec3 x_dir, vec3 y_dir)
 {
     float dotted_x = dot(target, x_dir);
     float dotted_y = dot(target, y_dir);
-    float dotted_z = dot(target, z_dir);
 
-    return vec3(dotted_x, dotted_y, dotted_z);
+    return vec2(dotted_x, dotted_y);
 }
