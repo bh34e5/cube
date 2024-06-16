@@ -594,6 +594,16 @@ static void render(Application const *app) {
     Color *texture = NULL;
     uint32_t tex_width, tex_height;
 
+    int width, height;
+    SDL_GetWindowSize(app->window, &width, &height);
+
+    float dim_vec[2] = {
+        (float)width,
+        (float)height,
+    };
+
+    glViewport(0, 0, width, height);
+
     if (arena_begin(app->arena) == 0) {
         GLint uniform_index;
 
@@ -629,6 +639,10 @@ static void render(Application const *app) {
         uniform_index = glGetUniformLocation(
             gl_program, "view_information.screen_cube_ratio");
         glUniform1f(uniform_index, screen_cube_ratio);
+
+        uniform_index =
+            glGetUniformLocation(gl_program, "view_information.screen_dims");
+        glUniform2fv(uniform_index, 1, dim_vec);
 
         uniform_index = glGetUniformLocation(gl_program, "side_count");
         glUniform1f(uniform_index, (float)get_side_count(app->state.cube));

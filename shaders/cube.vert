@@ -13,6 +13,7 @@ struct ViewInformation
     vec3 cube_center;
 
     float screen_cube_ratio;
+    vec2 screen_dims;
 };
 
 uniform ViewInformation view_information;
@@ -41,8 +42,10 @@ void main()
           normalize(x_dir),
           normalize(y_dir));
 
+  vec2 screen = components / normalize(view_information.screen_dims);
+
   float depth = dot(projected, cube_center) / cube_center_dist_sq;
-  vec3 res = vec3(components, depth);
+  vec3 res = vec3(screen, depth);
 
   gl_Position = vec4(res, 1.0f);
   tex = 0.5f * (v3_pos + vec3(1.0f));
