@@ -43,7 +43,7 @@ static State get_initial_state(Cube *cube) {
         .theta_rot_dir = 1.0,
         .phi_rot_dir = 1.0,
 
-        .rotate_depth = 1,
+        .rotate_depth = 0,
 
         .should_rotate = 0,
         .should_close = 0,
@@ -176,15 +176,51 @@ static int gl_link_program(GLuint *program, GLuint vertex_shader,
     return 0;
 }
 
-static int gl_init(SDL_Window *window, Application_GL_Info *gl_info) {
+static int load_cube_shader_programs(GLuint *gl_program) {
     int ret = 0;
-    SDL_GLContext context = NULL;
-    GLenum glew_error;
-    GLuint vert_shader, frag_shader, gl_program;
+    GLuint vert_shader, frag_shader;
 
     char *vert_contents = NULL;
     char *frag_contents = NULL;
     long vert_size, frag_size;
+
+    CLEANUP_IF(load_file(VERTEX_SHADER_NAME, &vert_size, &vert_contents) != 0,
+               "Failed to load vertex shader contents\n");
+
+    CLEANUP_IF(load_file(FRAGMENT_SHADER_NAME, &frag_size, &frag_contents) != 0,
+               "Failed to load fragment shader contents\n");
+
+    CLEANUP_IF(gl_load_shader(&vert_shader, GL_VERTEX_SHADER,
+                              (GLchar const *)vert_contents) < 0,
+               "Failed to load vertex shader\n");
+
+    CLEANUP_IF(gl_load_shader(&frag_shader, GL_FRAGMENT_SHADER,
+                              (GLchar const *)frag_contents) < 0,
+               "Failed to load fragment shader\n");
+
+    CLEANUP_IF(gl_link_program(gl_program, vert_shader, frag_shader) < 0,
+               "Failed to link program\n");
+
+    // after linking, it's okay to delete these
+    glDeleteShader(vert_shader);
+    glDeleteShader(frag_shader);
+
+cleanup:
+    if (vert_contents != NULL) {
+        free(vert_contents);
+    }
+    if (frag_contents != NULL) {
+        free(frag_contents);
+    }
+
+    return ret;
+}
+
+static int gl_init(SDL_Window *window, Application_GL_Info *gl_info) {
+    int ret = 0;
+    SDL_GLContext context = NULL;
+    GLenum glew_error;
+    GLuint gl_program;
 
     CubeModel cube_model = {0};
 
@@ -201,36 +237,15 @@ static int gl_init(SDL_Window *window, Application_GL_Info *gl_info) {
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glCullFace(GL_BACK);
     glEnable(GL_CULL_FACE);
-    glEnable(GL_DEPTH_TEST);    // TODO: what is this?
-    glDisable(GL_STENCIL_TEST); // TODO: what is this?
+    glEnable(GL_DEPTH_TEST);
 
 #ifdef _DEBUG
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG);
     gl_debug_init();
 #endif
 
-    CLEANUP_IF(load_file(VERTEX_SHADER_NAME, &vert_size, &vert_contents) != 0,
-               "Failed to load vertex shader contents\n");
-
-    CLEANUP_IF(load_file(FRAGMENT_SHADER_NAME, &frag_size, &frag_contents) != 0,
-               "Failed to load fragment shader contents\n");
-
-    CLEANUP_IF(gl_load_shader(&vert_shader, GL_VERTEX_SHADER,
-                              (GLchar const *)vert_contents) < 0,
-               "Failed to load vertex shader\n");
-
-    CLEANUP_IF(gl_load_shader(&frag_shader, GL_FRAGMENT_SHADER,
-                              (GLchar const *)frag_contents) < 0,
-               "Failed to load fragment shader\n");
-
-    CLEANUP_IF(gl_link_program(&gl_program, vert_shader, frag_shader) < 0,
-               "Failed to link program\n");
-
-    // after linking, it's okay to delete these
-    free(vert_contents);
-    free(frag_contents);
-    glDeleteShader(vert_shader);
-    glDeleteShader(frag_shader);
+    CLEANUP_IF(load_cube_shader_programs(&gl_program),
+               "Failed to link cube shader program\n");
 
     glUseProgram(gl_program);
 
@@ -238,8 +253,6 @@ static int gl_init(SDL_Window *window, Application_GL_Info *gl_info) {
     glGenBuffers(1, &cube_model.vbo);
     glGenBuffers(1, &cube_model.ebo);
     glGenTextures(1, &cube_model.texture);
-
-    glBindVertexArray(cube_model.vao);
 
     *gl_info = (Application_GL_Info){
         .gl_context = context,
@@ -267,14 +280,6 @@ cleanup:
 
         if (gl_program != 0) {
             glDeleteProgram(gl_program);
-        }
-
-        if (frag_contents != NULL) {
-            free(frag_contents);
-        }
-
-        if (vert_contents != NULL) {
-            free(vert_contents);
         }
 
         if (context != NULL) {
@@ -401,6 +406,9 @@ static StateUpdate get_inputs(Application const *app) {
                 } else if (keys[SDL_SCANCODE_9] == 1) {
                     s_update.set_depth = 1;
                     s_update.rotate_depth = 9;
+                } else if (keys[SDL_SCANCODE_0] == 1) {
+                    s_update.set_depth = 1;
+                    s_update.rotate_depth = 0;
                 }
             }
 
@@ -499,7 +507,7 @@ static void update(Application *app, StateUpdate s_update) {
     }
 
     if (s_update.rotate_front) {
-        rotate_front(app->state.cube, app->state.rotate_depth - 1, 1);
+        rotate_front(app->state.cube, app->state.rotate_depth, 1);
     }
 
     if (s_update.set_face) {
@@ -566,11 +574,43 @@ static void create_texture_from_cube(Application const *app, Color **p_texture,
     *p_height = height;
 }
 
-static void render(Application const *app) {
-    // TODO: Get the screen width and height and use a "pixels to meters" type
-    // thing like from Handmade Hero?
+static void set_vec2_uniform(GLuint gl_program, char const *uniform_name,
+                             uint32_t vec_count, float *floats) {
+    GLuint uniform_index = glGetUniformLocation(gl_program, uniform_name);
+    glUniform2fv(uniform_index, vec_count, (GLfloat const *)floats);
+}
+
+static void set_vec3_uniform(GLuint gl_program, char const *uniform_name,
+                             uint32_t vec_count, float *floats) {
+    GLuint uniform_index = glGetUniformLocation(gl_program, uniform_name);
+    glUniform3fv(uniform_index, vec_count, (GLfloat const *)floats);
+}
+
+static void set_float_uniform(GLuint gl_program, char const *uniform_name,
+                              float f) {
+    GLuint uniform_index = glGetUniformLocation(gl_program, uniform_name);
+    glUniform1f(uniform_index, f);
+}
+
+static void set_cube_uniforms(GLuint gl_program, V3 x_dir, V3 y_dir,
+                              V3 cube_center, uint32_t side_count,
+                              float screen_cube_ratio, float dim_vec[2]) {
+    set_vec3_uniform(gl_program, "view_information.x_dir", 1, x_dir.xyz);
+    set_vec3_uniform(gl_program, "view_information.y_dir", 1, y_dir.xyz);
+    set_vec3_uniform(gl_program, "view_information.cube_center", 1,
+                     cube_center.xyz);
+    set_float_uniform(gl_program, "view_information.screen_cube_ratio",
+                      screen_cube_ratio);
+    set_vec2_uniform(gl_program, "view_information.screen_dims", 1, dim_vec);
+    set_float_uniform(gl_program, "side_count", (float)side_count);
+}
+
+static int render_cube(Application const *app, float dim_vec[2]) {
+    int ret = 0;
 
     GLuint gl_program = app->gl_info.gl_program;
+    uint32_t side_count = get_side_count(app->state.cube);
+
     CubeModel const *cube_model = &app->gl_info.cube_model;
 
     Camera const *camera = &app->state.camera;
@@ -594,6 +634,61 @@ static void render(Application const *app) {
     Color *texture = NULL;
     uint32_t tex_width, tex_height;
 
+    GLuint uniform_index;
+
+    create_texture_from_cube(app, &texture, &tex_width, &tex_height);
+    CLEANUP_IF(texture == NULL, "Couldn't allocate space for cube texture\n");
+
+    glBindVertexArray(cube_model->vao);
+
+    glActiveTexture(GL_TEXTURE0);
+    uniform_index = glGetUniformLocation(gl_program, "cube_texture");
+    glUniform1i(uniform_index, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+
+    set_cube_uniforms(gl_program, x_dir, y_dir, cube_center, side_count,
+                      screen_cube_ratio, dim_vec);
+
+    glBindTexture(GL_TEXTURE_2D, cube_model->texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, tex_width, tex_height, 0, GL_RGB,
+                 GL_UNSIGNED_BYTE, texture);
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    // fill vertex buffer
+    glBindBuffer(GL_ARRAY_BUFFER, cube_model->vbo);
+    glBufferData(GL_ARRAY_BUFFER,
+                 cube_model->vertex_count * sizeof(*cube_model->info),
+                 (void const *)cube_model->info, GL_STATIC_DRAW);
+
+    // fill index buffer
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cube_model->ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 cube_model->index_count * sizeof(*cube_model->indices),
+                 (void const *)cube_model->indices, GL_STATIC_DRAW);
+
+    // specify location of data within buffer
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(*cube_model->info),
+                          (GLvoid const *)(0 * sizeof(float)));
+    glEnableVertexAttribArray(0);
+
+    glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, sizeof(*cube_model->info),
+                          (GLvoid const *)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+
+    glDrawElements(GL_TRIANGLES, cube_model->index_count, GL_UNSIGNED_INT,
+                   (void const *)0);
+
+cleanup:
+    return ret;
+}
+
+static void render(Application const *app) {
+    // TODO: Get the screen width and height and use a "pixels to meters" type
+    // thing like from Handmade Hero?
+
     int width, height;
     SDL_GetWindowSize(app->window, &width, &height);
 
@@ -605,80 +700,12 @@ static void render(Application const *app) {
     glViewport(0, 0, width, height);
 
     if (arena_begin(app->arena) == 0) {
-        GLint uniform_index;
-
-        create_texture_from_cube(app, &texture, &tex_width, &tex_height);
-        if (texture == NULL) {
-            goto skip_render;
-        }
-
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        glActiveTexture(GL_TEXTURE0);
-        uniform_index = glGetUniformLocation(gl_program, "cube_texture");
-        glUniform1i(uniform_index, 0);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-
         // TODO: maybe write some wrappers for this?
-
-        uniform_index =
-            glGetUniformLocation(gl_program, "view_information.x_dir");
-        glUniform3fv(uniform_index, 1, (GLfloat const *)x_dir.xyz);
-
-        uniform_index =
-            glGetUniformLocation(gl_program, "view_information.y_dir");
-        glUniform3fv(uniform_index, 1, (GLfloat const *)y_dir.xyz);
-
-        uniform_index =
-            glGetUniformLocation(gl_program, "view_information.cube_center");
-        glUniform3fv(uniform_index, 1, (GLfloat const *)cube_center.xyz);
-
-        uniform_index = glGetUniformLocation(
-            gl_program, "view_information.screen_cube_ratio");
-        glUniform1f(uniform_index, screen_cube_ratio);
-
-        uniform_index =
-            glGetUniformLocation(gl_program, "view_information.screen_dims");
-        glUniform2fv(uniform_index, 1, dim_vec);
-
-        uniform_index = glGetUniformLocation(gl_program, "side_count");
-        glUniform1f(uniform_index, (float)get_side_count(app->state.cube));
-
-        glBindVertexArray(cube_model->vao);
-
-        glBindTexture(GL_TEXTURE_2D, cube_model->texture);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, tex_width, tex_height, 0, GL_RGB,
-                     GL_UNSIGNED_BYTE, texture);
-        glGenerateMipmap(GL_TEXTURE_2D);
-
-        // fill vertex buffer
-        glBindBuffer(GL_ARRAY_BUFFER, cube_model->vbo);
-        glBufferData(GL_ARRAY_BUFFER,
-                     cube_model->vertex_count * sizeof(*cube_model->info),
-                     (void const *)cube_model->info, GL_STATIC_DRAW);
-
-        // fill index buffer
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cube_model->ebo);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER,
-                     cube_model->index_count * sizeof(*cube_model->indices),
-                     (void const *)cube_model->indices, GL_STATIC_DRAW);
-
-        // specify location of data within buffer
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
-                              sizeof(*cube_model->info),
-                              (GLvoid const *)(0 * sizeof(float)));
-        glEnableVertexAttribArray(0);
-
-        glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE,
-                              sizeof(*cube_model->info),
-                              (GLvoid const *)(3 * sizeof(float)));
-        glEnableVertexAttribArray(1);
-
-        glDrawElements(GL_TRIANGLES, cube_model->index_count, GL_UNSIGNED_INT,
-                       (void const *)0);
+        if (render_cube(app, dim_vec) != 0) {
+            goto skip_render;
+        }
 
         SDL_GL_SwapWindow(app->window);
 
