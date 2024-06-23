@@ -47,6 +47,13 @@ static State get_initial_state(Cube *cube) {
 
         .should_rotate = 0,
         .should_close = 0,
+
+        .screen_mouse_x = 0,
+        .screen_mouse_y = 0,
+
+        .window_width = INIT_WIDTH,
+        .window_height = INIT_HEIGHT,
+
         .camera = get_initial_camera(),
         .cube = cube,
     };
@@ -338,6 +345,21 @@ static StateUpdate get_inputs(Application const *app) {
         case SDL_QUIT: {
             s_update.toggle_close = 1;
         } break;
+        case SDL_WINDOWEVENT: {
+            SDL_WindowEvent w_event = event.window;
+            switch (w_event.event) {
+            case SDL_WINDOWEVENT_RESIZED: {
+                s_update.window_width = w_event.data1;
+                s_update.window_height = w_event.data2;
+                s_update.window_resized = 1;
+            } break;
+            }
+        } break;
+        case SDL_MOUSEMOTION: {
+            s_update.mouse_x = event.motion.x;
+            s_update.mouse_y = event.motion.y;
+            s_update.mouse_moved = 1;
+        } break;
         case SDL_KEYDOWN: {
             Uint8 const *keys = SDL_GetKeyboardState(NULL);
 
@@ -517,6 +539,29 @@ static void update(Application *app, StateUpdate s_update) {
         set_facing_side(app->state.cube, clamped_fc);
     }
 
+    if (s_update.window_resized) {
+        app->state.window_width = s_update.window_width;
+        app->state.window_height = s_update.window_height;
+    }
+
+    if (s_update.mouse_moved) {
+        app->state.screen_mouse_x = s_update.mouse_x;
+        app->state.screen_mouse_y = s_update.mouse_y;
+    }
+
+    if (s_update.window_resized || s_update.mouse_moved) {
+        float mx = app->state.screen_mouse_x;
+        float my = app->state.screen_mouse_y;
+        float ww = app->state.window_width;
+        float wh = app->state.window_height;
+        float factor = sqrt(ww * ww + wh * wh);
+
+        app->state.mouse = (V2){
+            .x = (-1.0f * ww + 2.0f * mx) / factor,
+            .y = (+1.0f * wh - 2.0f * my) / factor,
+        };
+    }
+
     app->last_ticks = s_update.ticks;
 }
 
@@ -592,20 +637,67 @@ static void set_float_uniform(GLuint gl_program, char const *uniform_name,
     glUniform1f(uniform_index, f);
 }
 
+// assumes the point is in the plane of the triangle
+static int inside_triangle(V3 point, V3 ab, V3 ac) {
+    V3 bc_perp, cb_perp;
+    V3 ab_perp, ac_perp;
+
+    float x;
+    float y;
+
+    decompose(ab, as_unit(ac), &bc_perp);
+    decompose(ac, as_unit(ab), &cb_perp);
+
+    ab_perp = scale(bc_perp, 1.0f / dot(bc_perp, ab));
+    ac_perp = scale(cb_perp, 1.0f / dot(cb_perp, ac));
+
+    x = dot(point, ab_perp);
+    y = dot(point, ac_perp);
+
+    if ((0.0f <= x && x <= 1.0f) && (0.0f <= y && y <= 1.0f) &&
+        (x + y <= 1.0f)) {
+        return 1;
+    }
+
+    return 0;
+}
+
+static int check_intersection(V3 camera, V3 mouse_direction, V3 a, V3 b, V3 c,
+                              float *res_t) {
+    int intersects = 0;
+
+    V3 minus_a = scale(a, -1.0f);
+    V3 ab = add(b, minus_a);
+    V3 ac = add(c, minus_a);
+
+    V3 perp = cross(ab, ac);
+
+    float t = (dot(a, perp) - dot(camera, perp)) / dot(mouse_direction, perp);
+
+    V3 point = add(camera, scale(mouse_direction, t));
+
+    if (inside_triangle(add(point, minus_a), ab, ac)) {
+        *res_t = t;
+        intersects = 1;
+    }
+
+    return intersects;
+}
+
 static void set_cube_uniforms(GLuint gl_program, V3 x_dir, V3 y_dir,
                               V3 cube_center, uint32_t side_count,
-                              float screen_cube_ratio, float dim_vec[2]) {
+                              float screen_cube_ratio, V2 dim_vec) {
     set_vec3_uniform(gl_program, "view_information.x_dir", 1, x_dir.xyz);
     set_vec3_uniform(gl_program, "view_information.y_dir", 1, y_dir.xyz);
     set_vec3_uniform(gl_program, "view_information.cube_center", 1,
                      cube_center.xyz);
     set_float_uniform(gl_program, "view_information.screen_cube_ratio",
                       screen_cube_ratio);
-    set_vec2_uniform(gl_program, "view_information.screen_dims", 1, dim_vec);
+    set_vec2_uniform(gl_program, "view_information.screen_dims", 1, dim_vec.xy);
     set_float_uniform(gl_program, "side_count", (float)side_count);
 }
 
-static int render_cube(Application const *app, float dim_vec[2]) {
+static int render_cube(Application const *app, V2 dim_vec) {
     int ret = 0;
 
     GLuint gl_program = app->gl_info.gl_program;
@@ -619,6 +711,7 @@ static int render_cube(Application const *app, float dim_vec[2]) {
 
     V3 minus_center = polar_to_rectangular(camera_pos);
     V3 cube_center = scale(minus_center, -1.0);
+    V3 unit_center = as_unit(cube_center);
     float screen_cube_ratio = CAMERA_SCREEN_DIST / camera_pos.rho;
 
     V3 y_dir_polar = {
@@ -629,12 +722,56 @@ static int render_cube(Application const *app, float dim_vec[2]) {
                                       : PI_2 - camera_pos.phi,
     };
     V3 y_dir = polar_to_rectangular(y_dir_polar);
-    V3 x_dir = cross(as_unit(cube_center), y_dir);
+    V3 x_dir = cross(unit_center, y_dir);
 
     Color *texture = NULL;
     uint32_t tex_width, tex_height;
 
     GLuint uniform_index;
+
+    V3 mouse_3 = {
+        .x = app->state.mouse.x,
+        .y = app->state.mouse.y,
+        .z = CAMERA_SCREEN_DIST,
+    };
+    V3 mouse_in_world = compose(mouse_3, x_dir, y_dir, unit_center);
+
+    // TODO: turn this into somethign that is separate from the vertices so
+    // that I can clear it every time with memset or something
+    for (uint32_t ind = 0; ind < cube_model->vertex_count; ++ind) {
+        cube_model->info[ind].intersecting = 0.0f;
+    }
+
+    for (uint32_t ind = 0; ind < cube_model->index_count; ind += 6) {
+        float res_t0, res_t1;
+        int ind00 = cube_model->indices[ind + 0];
+        int ind01 = cube_model->indices[ind + 1];
+        int ind02 = cube_model->indices[ind + 2];
+        int ind10 = cube_model->indices[ind + 3];
+        int ind11 = cube_model->indices[ind + 4];
+        int ind12 = cube_model->indices[ind + 5];
+
+        int is_intersecting_triangle0 = check_intersection(
+            minus_center, mouse_in_world, cube_model->info[ind00].position,
+            cube_model->info[ind01].position, cube_model->info[ind02].position,
+            &res_t0);
+
+        int is_intersecting_triangle1 = check_intersection(
+            minus_center, mouse_in_world, cube_model->info[ind10].position,
+            cube_model->info[ind11].position, cube_model->info[ind12].position,
+            &res_t1);
+
+        // TODO: turn this into somethign that is separate from the vertices so
+        // that I can clear it every time with memset or something
+        if (is_intersecting_triangle0 || is_intersecting_triangle1) {
+            cube_model->info[ind00].intersecting = 1.0f;
+            cube_model->info[ind01].intersecting = 1.0f;
+            cube_model->info[ind02].intersecting = 1.0f;
+            cube_model->info[ind10].intersecting = 1.0f;
+            cube_model->info[ind11].intersecting = 1.0f;
+            cube_model->info[ind12].intersecting = 1.0f;
+        }
+    }
 
     create_texture_from_cube(app, &texture, &tex_width, &tex_height);
     CLEANUP_IF(texture == NULL, "Couldn't allocate space for cube texture\n");
@@ -670,13 +807,20 @@ static int render_cube(Application const *app, float dim_vec[2]) {
                  (void const *)cube_model->indices, GL_STATIC_DRAW);
 
     // specify location of data within buffer
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(*cube_model->info),
-                          (GLvoid const *)(0 * sizeof(float)));
+    glVertexAttribPointer(
+        0, 3, GL_FLOAT, GL_FALSE, sizeof(*cube_model->info),
+        (GLvoid const *)offsetof(VertexInformation, position));
     glEnableVertexAttribArray(0);
 
-    glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, sizeof(*cube_model->info),
-                          (GLvoid const *)(3 * sizeof(float)));
+    glVertexAttribPointer(
+        1, 1, GL_FLOAT, GL_FALSE, sizeof(*cube_model->info),
+        (GLvoid const *)offsetof(VertexInformation, face_num));
     glEnableVertexAttribArray(1);
+
+    glVertexAttribPointer(
+        2, 1, GL_FLOAT, GL_FALSE, sizeof(*cube_model->info),
+        (GLvoid const *)offsetof(VertexInformation, intersecting));
+    glEnableVertexAttribArray(2);
 
     glDrawElements(GL_TRIANGLES, cube_model->index_count, GL_UNSIGNED_INT,
                    (void const *)0);
@@ -689,15 +833,12 @@ static void render(Application const *app) {
     // TODO: Get the screen width and height and use a "pixels to meters" type
     // thing like from Handmade Hero?
 
-    int width, height;
-    SDL_GetWindowSize(app->window, &width, &height);
-
-    float dim_vec[2] = {
-        (float)width,
-        (float)height,
+    V2 dim_vec = {
+        .x = (float)app->state.window_width,
+        .y = (float)app->state.window_height,
     };
 
-    glViewport(0, 0, width, height);
+    glViewport(0, 0, app->state.window_width, app->state.window_height);
 
     if (arena_begin(app->arena) == 0) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -738,18 +879,21 @@ static void define_split_vertices(Arena *arena, uint32_t cube_size,
         cube_model->info[cur_index++] = (VertexInformation){
             .position = start,
             .face_num = (float)face_id,
+            .intersecting = 0.0f,
         };
 
         for (uint32_t x_i = 1; x_i < cube_size; ++x_i) {
             cube_model->info[cur_index++] = (VertexInformation){
                 .position = v_lerp(start, x_i * factor, target_one),
                 .face_num = (float)face_id,
+                .intersecting = 0.0f,
             };
         }
 
         cube_model->info[cur_index++] = (VertexInformation){
             .position = target_one,
             .face_num = (float)face_id,
+            .intersecting = 0.0f,
         };
 
         for (uint32_t y_i = 1; y_i < cube_size; ++y_i) {
@@ -759,6 +903,7 @@ static void define_split_vertices(Arena *arena, uint32_t cube_size,
             cube_model->info[cur_index++] = (VertexInformation){
                 .position = inner_start,
                 .face_num = (float)face_id,
+                .intersecting = 0.0f,
             };
 
             for (uint32_t x_i = 1; x_i < cube_size; ++x_i) {
@@ -766,30 +911,35 @@ static void define_split_vertices(Arena *arena, uint32_t cube_size,
                     .position =
                         v_lerp(inner_start, x_i * factor, inner_target_one),
                     .face_num = (float)face_id,
+                    .intersecting = 0.0f,
                 };
             }
 
             cube_model->info[cur_index++] = (VertexInformation){
                 .position = inner_target_one,
                 .face_num = (float)face_id,
+                .intersecting = 0.0f,
             };
         }
 
         cube_model->info[cur_index++] = (VertexInformation){
             .position = target_two,
             .face_num = (float)face_id,
+            .intersecting = 0.0f,
         };
 
         for (uint32_t x_i = 1; x_i < cube_size; ++x_i) {
             cube_model->info[cur_index++] = (VertexInformation){
                 .position = v_lerp(target_two, x_i * factor, final),
                 .face_num = (float)face_id,
+                .intersecting = 0.0f,
             };
         }
 
         cube_model->info[cur_index++] = (VertexInformation){
             .position = final,
             .face_num = (float)face_id,
+            .intersecting = 0.0f,
         };
     }
 }

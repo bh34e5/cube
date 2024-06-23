@@ -129,3 +129,11 @@ V3 decompose(V3 target, V3 dir, V3 *perp) {
 
     return res;
 }
+
+V3 compose(V3 target, V3 x_dir, V3 y_dir, V3 z_dir) {
+    V3 x_comp = scale(x_dir, target.x);
+    V3 y_comp = scale(y_dir, target.y);
+    V3 z_comp = scale(z_dir, target.z);
+
+    return add(add(x_comp, y_comp), z_comp);
+}

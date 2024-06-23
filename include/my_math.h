@@ -19,6 +19,15 @@ typedef struct {
     };
 } V3;
 
+typedef struct {
+    union {
+        struct {
+            float x, y;
+        };
+        float xy[2];
+    };
+} V2;
+
 #define V3_of(x_v, y_v, z_v) ((V3){.x = (x_v), .y = (y_v), .z = (z_v)})
 
 #define CUBE_FACES 6
@@ -45,5 +54,6 @@ V3 as_unit(V3 v);
 V3 polar_to_rectangular(V3 v);
 
 V3 decompose(V3 target, V3 dir, V3 *perp);
+V3 compose(V3 target, V3 x_dir, V3 y_dir, V3 z_dir);
 
 #endif

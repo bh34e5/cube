@@ -2,9 +2,11 @@
 
 layout (location = 0) in vec3 v3_pos;
 layout (location = 1) in float in_face_num;
+layout (location = 2) in float intersecting_triangle;
 
 out vec3 tex;
 out flat int face_num;
+out float mouse_in;
 
 struct ViewInformation
 {
@@ -50,6 +52,7 @@ void main()
   gl_Position = vec4(res, 1.0f);
   tex = 0.5f * (v3_pos + vec3(1.0f));
   face_num = int(in_face_num);
+  mouse_in = intersecting_triangle;
 }
 
 vec2 decompose(vec3 target, vec3 x_dir, vec3 y_dir)

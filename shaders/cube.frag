@@ -2,6 +2,7 @@
 
 in vec3 tex;
 in flat int face_num;
+in float mouse_in;
 
 out vec4 v4_frag_out;
 
@@ -21,6 +22,8 @@ void main()
 {
   vec2 tex_coord = get_v2_from_tex(tex, face_num) / 4 + get_base(face_num);
   float factor = get_color_scale(tex_coord);
+  factor *= 0.5f + 0.5f * (1.0f - floor(mouse_in));
+
   v4_frag_out = vec4(factor * texture(cube_texture, tex_coord).xyz, 1.0);
 }
 

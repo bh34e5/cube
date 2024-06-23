@@ -23,6 +23,14 @@ typedef struct {
 
     int should_rotate;
     int should_close;
+
+    uint32_t screen_mouse_x;
+    uint32_t screen_mouse_y;
+
+    uint32_t window_width;
+    uint32_t window_height;
+
+    V2 mouse;
     Camera camera;
     Cube *cube;
 } State;
@@ -34,6 +42,8 @@ typedef struct {
         uint32_t rotate_front : 1;
         uint32_t set_face : 1;
         uint32_t set_depth : 1;
+        uint32_t mouse_moved : 1;
+        uint32_t window_resized : 1;
     };
 
     int camera_rho_dir;
@@ -43,6 +53,12 @@ typedef struct {
     FaceColor target_face;
     int rotate_depth;
 
+    uint32_t mouse_x;
+    uint32_t mouse_y;
+
+    uint32_t window_width;
+    uint32_t window_height;
+
     double delta_time;
     Uint32 ticks;
 } StateUpdate;
@@ -50,6 +66,7 @@ typedef struct {
 typedef struct {
     V3 position;
     float face_num;
+    float intersecting;
 } VertexInformation;
 
 typedef struct {
