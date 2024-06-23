@@ -66,11 +66,14 @@ typedef struct {
 typedef struct {
     V3 position;
     float face_num;
-    float intersecting;
 } VertexInformation;
 
 typedef struct {
-    GLuint vao, vbo, ebo, texture;
+    float intersecting;
+} VertexAttributes;
+
+typedef struct {
+    GLuint vao, vbo[2], ebo, texture;
 
     VertexInformation *info;
     uint32_t vertex_count;

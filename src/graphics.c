@@ -257,7 +257,7 @@ static int gl_init(SDL_Window *window, Application_GL_Info *gl_info) {
     glUseProgram(gl_program);
 
     glGenVertexArrays(1, &cube_model.vao);
-    glGenBuffers(1, &cube_model.vbo);
+    glGenBuffers(2, cube_model.vbo);
     glGenBuffers(1, &cube_model.ebo);
     glGenTextures(1, &cube_model.texture);
 
@@ -277,8 +277,8 @@ cleanup:
             glDeleteBuffers(1, &cube_model.ebo);
         }
 
-        if (cube_model.vbo != 0) {
-            glDeleteBuffers(1, &cube_model.vbo);
+        if (cube_model.vbo[0] != 0) {
+            glDeleteBuffers(2, cube_model.vbo);
         }
 
         if (cube_model.vao != 0) {
@@ -306,8 +306,8 @@ static void app_cleanup(Application *app) {
         glDeleteBuffers(1, &app->gl_info.cube_model.ebo);
     }
 
-    if (app->gl_info.cube_model.vbo != 0) {
-        glDeleteBuffers(1, &app->gl_info.cube_model.vbo);
+    if (app->gl_info.cube_model.vbo[0] != 0) {
+        glDeleteBuffers(2, app->gl_info.cube_model.vbo);
     }
 
     if (app->gl_info.cube_model.vao != 0) {
@@ -736,10 +736,15 @@ static int render_cube(Application const *app, V2 dim_vec) {
     };
     V3 mouse_in_world = compose(mouse_3, x_dir, y_dir, unit_center);
 
+    VertexAttributes *attributes =
+        ARENA_PUSH_N(VertexAttributes, app->arena, cube_model->vertex_count);
+    CLEANUP_IF(attributes == NULL,
+               "Couldn't allocate space for vertex attribute array\n");
+
     // TODO: turn this into somethign that is separate from the vertices so
     // that I can clear it every time with memset or something
     for (uint32_t ind = 0; ind < cube_model->vertex_count; ++ind) {
-        cube_model->info[ind].intersecting = 0.0f;
+        attributes[ind].intersecting = 0.0f;
     }
 
     for (uint32_t ind = 0; ind < cube_model->index_count; ind += 6) {
@@ -764,12 +769,12 @@ static int render_cube(Application const *app, V2 dim_vec) {
         // TODO: turn this into somethign that is separate from the vertices so
         // that I can clear it every time with memset or something
         if (is_intersecting_triangle0 || is_intersecting_triangle1) {
-            cube_model->info[ind00].intersecting = 1.0f;
-            cube_model->info[ind01].intersecting = 1.0f;
-            cube_model->info[ind02].intersecting = 1.0f;
-            cube_model->info[ind10].intersecting = 1.0f;
-            cube_model->info[ind11].intersecting = 1.0f;
-            cube_model->info[ind12].intersecting = 1.0f;
+            attributes[ind00].intersecting = 1.0f;
+            attributes[ind01].intersecting = 1.0f;
+            attributes[ind02].intersecting = 1.0f;
+            attributes[ind10].intersecting = 1.0f;
+            attributes[ind11].intersecting = 1.0f;
+            attributes[ind12].intersecting = 1.0f;
         }
     }
 
@@ -794,17 +799,11 @@ static int render_cube(Application const *app, V2 dim_vec) {
                  GL_UNSIGNED_BYTE, texture);
     glGenerateMipmap(GL_TEXTURE_2D);
 
-    // fill vertex buffer
-    glBindBuffer(GL_ARRAY_BUFFER, cube_model->vbo);
+    // fill vertex information buffer
+    glBindBuffer(GL_ARRAY_BUFFER, cube_model->vbo[0]);
     glBufferData(GL_ARRAY_BUFFER,
                  cube_model->vertex_count * sizeof(*cube_model->info),
                  (void const *)cube_model->info, GL_STATIC_DRAW);
-
-    // fill index buffer
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cube_model->ebo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
-                 cube_model->index_count * sizeof(*cube_model->indices),
-                 (void const *)cube_model->indices, GL_STATIC_DRAW);
 
     // specify location of data within buffer
     glVertexAttribPointer(
@@ -817,10 +816,23 @@ static int render_cube(Application const *app, V2 dim_vec) {
         (GLvoid const *)offsetof(VertexInformation, face_num));
     glEnableVertexAttribArray(1);
 
+    // fill vertex information buffer
+    glBindBuffer(GL_ARRAY_BUFFER, cube_model->vbo[1]);
+    glBufferData(GL_ARRAY_BUFFER,
+                 cube_model->vertex_count * sizeof(*attributes),
+                 (void const *)attributes, GL_STATIC_DRAW);
+
+    // specify location of data within buffer
     glVertexAttribPointer(
-        2, 1, GL_FLOAT, GL_FALSE, sizeof(*cube_model->info),
-        (GLvoid const *)offsetof(VertexInformation, intersecting));
+        2, 1, GL_FLOAT, GL_FALSE, sizeof(*attributes),
+        (GLvoid const *)offsetof(VertexAttributes, intersecting));
     glEnableVertexAttribArray(2);
+
+    // fill index buffer
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cube_model->ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 cube_model->index_count * sizeof(*cube_model->indices),
+                 (void const *)cube_model->indices, GL_STATIC_DRAW);
 
     glDrawElements(GL_TRIANGLES, cube_model->index_count, GL_UNSIGNED_INT,
                    (void const *)0);
@@ -879,21 +891,18 @@ static void define_split_vertices(Arena *arena, uint32_t cube_size,
         cube_model->info[cur_index++] = (VertexInformation){
             .position = start,
             .face_num = (float)face_id,
-            .intersecting = 0.0f,
         };
 
         for (uint32_t x_i = 1; x_i < cube_size; ++x_i) {
             cube_model->info[cur_index++] = (VertexInformation){
                 .position = v_lerp(start, x_i * factor, target_one),
                 .face_num = (float)face_id,
-                .intersecting = 0.0f,
             };
         }
 
         cube_model->info[cur_index++] = (VertexInformation){
             .position = target_one,
             .face_num = (float)face_id,
-            .intersecting = 0.0f,
         };
 
         for (uint32_t y_i = 1; y_i < cube_size; ++y_i) {
@@ -903,7 +912,6 @@ static void define_split_vertices(Arena *arena, uint32_t cube_size,
             cube_model->info[cur_index++] = (VertexInformation){
                 .position = inner_start,
                 .face_num = (float)face_id,
-                .intersecting = 0.0f,
             };
 
             for (uint32_t x_i = 1; x_i < cube_size; ++x_i) {
@@ -911,35 +919,30 @@ static void define_split_vertices(Arena *arena, uint32_t cube_size,
                     .position =
                         v_lerp(inner_start, x_i * factor, inner_target_one),
                     .face_num = (float)face_id,
-                    .intersecting = 0.0f,
                 };
             }
 
             cube_model->info[cur_index++] = (VertexInformation){
                 .position = inner_target_one,
                 .face_num = (float)face_id,
-                .intersecting = 0.0f,
             };
         }
 
         cube_model->info[cur_index++] = (VertexInformation){
             .position = target_two,
             .face_num = (float)face_id,
-            .intersecting = 0.0f,
         };
 
         for (uint32_t x_i = 1; x_i < cube_size; ++x_i) {
             cube_model->info[cur_index++] = (VertexInformation){
                 .position = v_lerp(target_two, x_i * factor, final),
                 .face_num = (float)face_id,
-                .intersecting = 0.0f,
             };
         }
 
         cube_model->info[cur_index++] = (VertexInformation){
             .position = final,
             .face_num = (float)face_id,
-            .intersecting = 0.0f,
         };
     }
 }
