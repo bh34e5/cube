@@ -481,6 +481,65 @@ static StateUpdate get_inputs(Application const *app) {
     return s_update;
 }
 
+// assumes the point is in the plane of the triangle
+static int inside_triangle(V3 point, V3 ab, V3 ac) {
+    V3 bc_perp, cb_perp;
+    V3 ab_perp, ac_perp;
+
+    float x;
+    float y;
+
+    decompose(ab, as_unit(ac), &bc_perp);
+    decompose(ac, as_unit(ab), &cb_perp);
+
+    ab_perp = scale(bc_perp, 1.0f / dot(bc_perp, ab));
+    ac_perp = scale(cb_perp, 1.0f / dot(cb_perp, ac));
+
+    x = dot(point, ab_perp);
+    y = dot(point, ac_perp);
+
+    if ((0.0f <= x && x <= 1.0f) && (0.0f <= y && y <= 1.0f) &&
+        (x + y <= 1.0f)) {
+        return 1;
+    }
+
+    return 0;
+}
+
+static int check_intersection(V3 camera, V3 mouse_direction, V3 a, V3 b, V3 c,
+                              float *res_t) {
+    int intersects = 0;
+
+    V3 minus_a = scale(a, -1.0f);
+    V3 ab = add(b, minus_a);
+    V3 ac = add(c, minus_a);
+
+    V3 perp = cross(ab, ac);
+
+    float t = (dot(a, perp) - dot(camera, perp)) / dot(mouse_direction, perp);
+
+    V3 point = add(camera, scale(mouse_direction, t));
+
+    if (inside_triangle(add(point, minus_a), ab, ac)) {
+        *res_t = t;
+        intersects = 1;
+
+        if (print_a_thing) {
+            printf("found intersection\n");
+            printf("  cam = {.x = %f, .y = %f, .z = %f},\n   md = {.x = %f, .y "
+                   "= %f, .z = %f},\npoint = {.x = %f, .y = %f, .z = %f},\n    "
+                   "a = {.x = %f, .y = "
+                   "%f, .z = %f},\n    b = {.x = %f, .y = %f, "
+                   ".z = %f},\n    c = {.x = %f, .y = %f, .z = %f}\n\n",
+                   camera.x, camera.y, camera.z, mouse_direction.x,
+                   mouse_direction.y, mouse_direction.z, point.x, point.y,
+                   point.z, a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+        }
+    }
+
+    return intersects;
+}
+
 static void update(Application *app, StateUpdate s_update) {
     State *state = &app->state;
     double delta_time = s_update.delta_time;
@@ -562,6 +621,67 @@ static void update(Application *app, StateUpdate s_update) {
         };
     }
 
+    V3 mouse_3 = {
+        .x = app->state.mouse.x,
+        .y = app->state.mouse.y,
+        .z = CAMERA_SCREEN_DIST,
+    };
+
+    CubeModel *cube_model = &app->gl_info.cube_model;
+    V3 camera_pos = {
+        .rho = app->state.camera.rho,
+        .theta = app->state.camera.theta,
+        .phi = app->state.camera.phi,
+    };
+    V3 minus_center = polar_to_rectangular(camera_pos);
+    V3 cube_center = scale(minus_center, -1.0);
+    V3 unit_center = as_unit(cube_center);
+    V3 y_dir_polar = {
+        .rho = 1,
+        .theta =
+            camera_pos.phi >= PI_2 ? camera_pos.theta : camera_pos.theta + PI,
+        .phi = camera_pos.phi >= PI_2 ? camera_pos.phi - PI_2
+                                      : PI_2 - camera_pos.phi,
+    };
+    V3 y_dir = polar_to_rectangular(y_dir_polar);
+    V3 x_dir = cross(unit_center, y_dir);
+    V3 mouse_in_world = compose(mouse_3, x_dir, y_dir, unit_center);
+
+    int found = 0;
+    FaceColor hover_face;
+    float closest_t = INFINITY;
+    V3 closest_intersection = {0};
+
+    for (uint32_t ind = 0; ind < cube_model->index_count; ind += 3) {
+        float res_t;
+        int ind0 = cube_model->indices[ind + 0];
+        int ind1 = cube_model->indices[ind + 1];
+        int ind2 = cube_model->indices[ind + 2];
+
+        int is_intersecting_triangle = check_intersection(
+            minus_center, mouse_in_world, cube_model->info[ind0].position,
+            cube_model->info[ind1].position, cube_model->info[ind2].position,
+            &res_t);
+
+        if (is_intersecting_triangle) {
+            if (!found || res_t < closest_t) {
+                found = 1;
+                hover_face = (FaceColor)cube_model->info[ind0].face_num;
+                closest_t = res_t;
+                closest_intersection =
+                    add(minus_center, scale(mouse_in_world, closest_t));
+            }
+        }
+    }
+
+    if (found) {
+        state->cube_intersection_found = 1;
+        state->hover_face = hover_face;
+        state->cube_intersection = closest_intersection;
+    } else {
+        state->cube_intersection_found = 0;
+    }
+
     app->last_ticks = s_update.ticks;
 }
 
@@ -637,53 +757,6 @@ static void set_float_uniform(GLuint gl_program, char const *uniform_name,
     glUniform1f(uniform_index, f);
 }
 
-// assumes the point is in the plane of the triangle
-static int inside_triangle(V3 point, V3 ab, V3 ac) {
-    V3 bc_perp, cb_perp;
-    V3 ab_perp, ac_perp;
-
-    float x;
-    float y;
-
-    decompose(ab, as_unit(ac), &bc_perp);
-    decompose(ac, as_unit(ab), &cb_perp);
-
-    ab_perp = scale(bc_perp, 1.0f / dot(bc_perp, ab));
-    ac_perp = scale(cb_perp, 1.0f / dot(cb_perp, ac));
-
-    x = dot(point, ab_perp);
-    y = dot(point, ac_perp);
-
-    if ((0.0f <= x && x <= 1.0f) && (0.0f <= y && y <= 1.0f) &&
-        (x + y <= 1.0f)) {
-        return 1;
-    }
-
-    return 0;
-}
-
-static int check_intersection(V3 camera, V3 mouse_direction, V3 a, V3 b, V3 c,
-                              float *res_t) {
-    int intersects = 0;
-
-    V3 minus_a = scale(a, -1.0f);
-    V3 ab = add(b, minus_a);
-    V3 ac = add(c, minus_a);
-
-    V3 perp = cross(ab, ac);
-
-    float t = (dot(a, perp) - dot(camera, perp)) / dot(mouse_direction, perp);
-
-    V3 point = add(camera, scale(mouse_direction, t));
-
-    if (inside_triangle(add(point, minus_a), ab, ac)) {
-        *res_t = t;
-        intersects = 1;
-    }
-
-    return intersects;
-}
-
 static void set_cube_uniforms(GLuint gl_program, V3 x_dir, V3 y_dir,
                               V3 cube_center, uint32_t side_count,
                               float screen_cube_ratio, V2 dim_vec) {
@@ -695,6 +768,21 @@ static void set_cube_uniforms(GLuint gl_program, V3 x_dir, V3 y_dir,
                       screen_cube_ratio);
     set_vec2_uniform(gl_program, "view_information.screen_dims", 1, dim_vec.xy);
     set_float_uniform(gl_program, "side_count", (float)side_count);
+}
+
+static void get_dirs(V3 x_dir, V3 y_dir, V3 z_dir, V2 *screen_x, V2 *screen_y,
+                     V2 *screen_z) {
+    V3 x = {.x = 1.0f, .y = 0.0f, .z = 0.0f};
+    V3 y = {.x = 0.0f, .y = 1.0f, .z = 0.0f};
+    V3 z = {.x = 0.0f, .y = 0.0f, .z = 1.0f};
+
+    V3 x_prime = complete_decomp(x, x_dir, y_dir, z_dir);
+    V3 y_prime = complete_decomp(y, x_dir, y_dir, z_dir);
+    V3 z_prime = complete_decomp(z, x_dir, y_dir, z_dir);
+
+    *screen_x = x_prime.xy;
+    *screen_y = y_prime.xy;
+    *screen_z = z_prime.xy;
 }
 
 static int render_cube(Application const *app, V2 dim_vec) {
@@ -736,45 +824,88 @@ static int render_cube(Application const *app, V2 dim_vec) {
     };
     V3 mouse_in_world = compose(mouse_3, x_dir, y_dir, unit_center);
 
+    V2 screen_x, screen_y, screen_z;
+    get_dirs(x_dir, y_dir, unit_center, &screen_x, &screen_y, &screen_z);
+
     VertexAttributes *attributes =
         ARENA_PUSH_N(VertexAttributes, app->arena, cube_model->vertex_count);
     CLEANUP_IF(attributes == NULL,
                "Couldn't allocate space for vertex attribute array\n");
 
-    // TODO: turn this into somethign that is separate from the vertices so
-    // that I can clear it every time with memset or something
+    if (print_a_thing) {
+        printf("mouse_2 = {.x = %f, .y = %f},\nmouse_3 = {.x = %f, .y = %f, .z "
+               "= %f}\nmouse_in_world = {.x = "
+               "%f, .y = %f, .z = %f}\n\n",
+               app->state.mouse.x, app->state.mouse.y, mouse_3.x, mouse_3.y,
+               mouse_3.z, mouse_in_world.x, mouse_in_world.y, mouse_in_world.z);
+    }
+
+    // TODO: figure out if there is a better way to clear this, since these are
+    // all floats... try to figure out how to pass integers into the buffer
+    // without breaking everything
     for (uint32_t ind = 0; ind < cube_model->vertex_count; ++ind) {
         attributes[ind].intersecting = 0.0f;
     }
 
-    for (uint32_t ind = 0; ind < cube_model->index_count; ind += 6) {
-        float res_t0, res_t1;
-        int ind00 = cube_model->indices[ind + 0];
-        int ind01 = cube_model->indices[ind + 1];
-        int ind02 = cube_model->indices[ind + 2];
-        int ind10 = cube_model->indices[ind + 3];
-        int ind11 = cube_model->indices[ind + 4];
-        int ind12 = cube_model->indices[ind + 5];
+    if (app->state.cube_intersection_found) {
+        for (uint32_t ind = 0; ind < cube_model->index_count; ind += 6) {
+            int ind00 = cube_model->indices[ind + 0];
+            int ind01 = cube_model->indices[ind + 1];
+            int ind02 = cube_model->indices[ind + 2];
+            int ind10 = cube_model->indices[ind + 3];
+            int ind11 = cube_model->indices[ind + 4];
+            int ind12 = cube_model->indices[ind + 5];
 
-        int is_intersecting_triangle0 = check_intersection(
-            minus_center, mouse_in_world, cube_model->info[ind00].position,
-            cube_model->info[ind01].position, cube_model->info[ind02].position,
-            &res_t0);
+            if ((FaceColor)cube_model->info[ind00].face_num !=
+                app->state.hover_face) {
+                // can skip this one because we aren't even looking at the right
+                // face
+                continue;
+            }
 
-        int is_intersecting_triangle1 = check_intersection(
-            minus_center, mouse_in_world, cube_model->info[ind10].position,
-            cube_model->info[ind11].position, cube_model->info[ind12].position,
-            &res_t1);
+            V3 minus_a0 = scale(cube_model->info[ind00].position, -1.0f);
+            V3 minus_a1 = scale(cube_model->info[ind10].position, -1.0f);
 
-        // TODO: turn this into somethign that is separate from the vertices so
-        // that I can clear it every time with memset or something
-        if (is_intersecting_triangle0 || is_intersecting_triangle1) {
-            attributes[ind00].intersecting = 1.0f;
-            attributes[ind01].intersecting = 1.0f;
-            attributes[ind02].intersecting = 1.0f;
-            attributes[ind10].intersecting = 1.0f;
-            attributes[ind11].intersecting = 1.0f;
-            attributes[ind12].intersecting = 1.0f;
+            int is_intersecting_triangle0 = inside_triangle(
+                add(app->state.cube_intersection, minus_a0),
+                add(cube_model->info[ind01].position, minus_a0),
+                add(cube_model->info[ind02].position, minus_a0));
+
+            int is_intersecting_triangle1 = inside_triangle(
+                add(app->state.cube_intersection, minus_a1),
+                add(cube_model->info[ind11].position, minus_a1),
+                add(cube_model->info[ind12].position, minus_a1));
+
+            if (is_intersecting_triangle0 || is_intersecting_triangle1) {
+                V3 a0 = cube_model->info[ind00].position;
+                V3 b0 = cube_model->info[ind01].position;
+                V3 c0 = cube_model->info[ind02].position;
+                V3 a1 = cube_model->info[ind10].position;
+                V3 b1 = cube_model->info[ind11].position;
+                V3 c1 = cube_model->info[ind12].position;
+
+                if (print_a_thing) {
+                    printf(
+                        "Intersection with:\n"
+                        "closest_intersection = {.x = %f, .y = %f, .z = %f}\n"
+                        "a0 = {.x = %f, .y = %f, .z = %f}\nb0 = {.x = %f, .y = "
+                        "%f, .z = %f}\nc0 = {.x = %f, .y = %f, .z = %f}\n"
+                        "a1 = {.x = %f, .y = %f, .z = %f}\nb1 = {.x = %f, .y = "
+                        "%f, .z = %f}\nc1 = {.x = %f, .y = %f, .z = %f}\n\n",
+                        app->state.cube_intersection.x,
+                        app->state.cube_intersection.y,
+                        app->state.cube_intersection.z, a0.x, a0.y, a0.z, b0.x,
+                        b0.y, b0.z, c0.x, c0.y, c0.z, a1.x, a1.y, a1.z, b1.x,
+                        b1.y, b1.z, c1.x, c1.y, c1.z);
+                }
+
+                attributes[ind00].intersecting = 1.0f;
+                attributes[ind01].intersecting = 1.0f;
+                attributes[ind02].intersecting = 1.0f;
+                attributes[ind10].intersecting = 1.0f;
+                attributes[ind11].intersecting = 1.0f;
+                attributes[ind12].intersecting = 1.0f;
+            }
         }
     }
 

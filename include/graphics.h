@@ -21,14 +21,24 @@ typedef struct {
 
     int rotate_depth;
 
-    int should_rotate;
-    int should_close;
+    struct {
+        uint32_t should_rotate : 1;
+        uint32_t should_close : 1;
+        uint32_t mouse_held : 1;
+        uint32_t cube_intersection_found : 1;
+    };
 
     uint32_t screen_mouse_x;
     uint32_t screen_mouse_y;
 
+    uint32_t hold_screen_mouse_x;
+    uint32_t hold_screen_mouse_y;
+
     uint32_t window_width;
     uint32_t window_height;
+
+    FaceColor hover_face;
+    V3 cube_intersection;
 
     V2 mouse;
     Camera camera;
@@ -44,6 +54,7 @@ typedef struct {
         uint32_t set_depth : 1;
         uint32_t mouse_moved : 1;
         uint32_t window_resized : 1;
+        uint32_t toggle_mouse_click : 1;
     };
 
     int camera_rho_dir;
