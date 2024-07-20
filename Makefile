@@ -2,7 +2,12 @@ CC=gcc
 CFLAGS+=-Wall
 CFLAGS+=-Werror
 CFLAGS+=-Wpedantic
-CFLAGS+=-glldb
+
+ifeq ($(UNAME), Darwin)
+	CFLAGS+=-glldb
+else
+	CFLAGS+=-ggdb
+endif
 
 SRC=src
 INCLUDE=include
