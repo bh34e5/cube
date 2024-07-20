@@ -63,9 +63,9 @@ void free_cube(Cube *cube) {
 }
 
 void rotate_front(Cube *cube, uint32_t depth, int clockwise) {
-    DCHECK(depth <= (cube->sides / 2),
-           "Invalid rotation depth. Expected 0 <= depth <= %d, but got %d\n",
-           (cube->sides / 2), depth);
+    DCHECK(depth < cube->sides,
+           "Invalid rotation depth. Expected 0 <= depth < %d, but got %d\n",
+           cube->sides, depth);
 
     uint32_t sides = cube->sides;
     uint32_t colors_per_side = sides * sides;

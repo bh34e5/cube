@@ -17,7 +17,29 @@ typedef struct {
 } Camera;
 
 typedef struct {
-    int theta_rot_dir, phi_rot_dir;
+    V3 x_dir;
+    V3 y_dir;
+    V3 z_dir;
+
+    V2 screen_x_dir;
+    V2 screen_y_dir;
+    V2 screen_z_dir;
+} BasisInformation;
+
+typedef struct {
+    FaceColor hover_face;
+    V3 cube_intersection;
+} HoverInformation;
+
+typedef struct {
+    HoverInformation hover_info;
+    uint32_t screen_x;
+    uint32_t screen_y;
+} ClickInformation;
+
+typedef struct {
+    int theta_rot_dir;
+    int phi_rot_dir;
 
     int rotate_depth;
 
@@ -25,23 +47,24 @@ typedef struct {
         uint32_t should_rotate : 1;
         uint32_t should_close : 1;
         uint32_t mouse_held : 1;
+        uint32_t mouse_clicked_cube : 1;
         uint32_t cube_intersection_found : 1;
     };
 
     uint32_t screen_mouse_x;
     uint32_t screen_mouse_y;
 
-    uint32_t hold_screen_mouse_x;
-    uint32_t hold_screen_mouse_y;
-
     uint32_t window_width;
     uint32_t window_height;
 
-    FaceColor hover_face;
-    V3 cube_intersection;
+    HoverInformation hover_info;
+    ClickInformation click_info;
 
     V2 mouse;
     Camera camera;
+
+    BasisInformation basis_info;
+
     Cube *cube;
 } State;
 

@@ -1,5 +1,6 @@
 #include "my_math.h"
 
+#include <assert.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +30,42 @@ int const face_indices[CUBE_FACES * SQUARE_CORNERS] = {
 
 int const cube_vert_count = ARR_SIZE(cube_vertices);
 int const face_index_count = ARR_SIZE(face_indices);
+
+V3 point_to_face_center(V3 point) {
+    if (point.z == +1.0f) {
+        return (V3){.x = 0.0f, .y = 0.0f, .z = 1.0f};
+    } else if (point.z == -1.0f) {
+        return (V3){.x = 0.0f, .y = 0.0f, .z = -1.0f};
+    } else if (point.x == +1.0f) {
+        return (V3){.x = 1.0f, .y = 0.0f, .z = 0.0f};
+    } else if (point.x == -1.0f) {
+        return (V3){.x = -1.0f, .y = 0.0f, .z = 0.0f};
+    } else if (point.y == +1.0f) {
+        return (V3){.x = 0.0f, .y = 1.0f, .z = 0.0f};
+    } else if (point.y == -1.0f) {
+        return (V3){.x = 0.0f, .y = -1.0f, .z = 0.0f};
+    } else {
+        assert(0 && "Point was not on the cube");
+    }
+}
+
+FaceColor get_cube_face(V3 point) {
+    if (point.z == +1.0f) {
+        return FC_White;
+    } else if (point.z == -1.0f) {
+        return FC_Yellow;
+    } else if (point.x == +1.0f) {
+        return FC_Red;
+    } else if (point.x == -1.0f) {
+        return FC_Orange;
+    } else if (point.y == +1.0f) {
+        return FC_Blue;
+    } else if (point.y == -1.0f) {
+        return FC_Green;
+    } else {
+        assert(0 && "Point was not on the cube");
+    }
+}
 
 void expand_vertices_to_triangles(int const *indices, uint32_t index_count,
                                   uint32_t indices_per_face, int *triangles) {
@@ -88,6 +125,8 @@ inline V3 v_lerp(V3 l, float factor, V3 r) {
         .z = f_lerp(l.z, factor, r.z),
     };
 }
+
+inline float dot2(V2 lhs, V2 rhs) { return (lhs.x * rhs.x + lhs.y * rhs.y); }
 
 inline float dot(V3 lhs, V3 rhs) {
     return (lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z);

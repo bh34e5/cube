@@ -7,7 +7,7 @@
 #define _DEBUG
 
 #ifdef _DEBUG
-#include "graphics_debug.c"
+#include "debug_graphics.c"
 #endif
 
 #define INIT_WIDTH 680
@@ -47,6 +47,9 @@ static State get_initial_state(Cube *cube) {
 
         .should_rotate = 0,
         .should_close = 0,
+        .mouse_held = 0,
+        .mouse_clicked_cube = 0,
+        .cube_intersection_found = 0,
 
         .screen_mouse_x = 0,
         .screen_mouse_y = 0,
@@ -54,7 +57,14 @@ static State get_initial_state(Cube *cube) {
         .window_width = INIT_WIDTH,
         .window_height = INIT_HEIGHT,
 
+        .hover_info = {0},
+        .click_info = {{0}},
+
+        .mouse = {.x = 0, .y = 0},
         .camera = get_initial_camera(),
+
+        .basis_info = {{{{0}}}},
+
         .cube = cube,
     };
 }
@@ -355,6 +365,10 @@ static StateUpdate get_inputs(Application const *app) {
             } break;
             }
         } break;
+        case SDL_MOUSEBUTTONUP:
+        case SDL_MOUSEBUTTONDOWN: {
+            s_update.toggle_mouse_click = 1;
+        } break;
         case SDL_MOUSEMOTION: {
             s_update.mouse_x = event.motion.x;
             s_update.mouse_y = event.motion.y;
@@ -540,8 +554,63 @@ static int check_intersection(V3 camera, V3 mouse_direction, V3 a, V3 b, V3 c,
     return intersects;
 }
 
-static void update(Application *app, StateUpdate s_update) {
-    State *state = &app->state;
+static V2 to_screen_coords(V3 target, V3 x_dir, V3 y_dir) {
+    V3 yz_comp;
+    float x_comp = dot(x_dir, decompose(target, x_dir, &yz_comp));
+    float y_comp = dot(y_dir, decompose(yz_comp, y_dir, NULL));
+
+    return (V2){
+        .x = x_comp,
+        .y = y_comp,
+    };
+}
+
+static V3 const UNIT_X_AXIS = {.x = 1.0f, .y = 0.0f, .z = 0.0f};
+static V3 const UNIT_Y_AXIS = {.x = 0.0f, .y = 1.0f, .z = 0.0f};
+static V3 const UNIT_Z_AXIS = {.x = 0.0f, .y = 0.0f, .z = 1.0f};
+
+static BasisInformation get_basis_information(V3 camera_pos) {
+    V3 minus_center = polar_to_rectangular(camera_pos);
+    V3 cube_center = scale(minus_center, -1.0);
+    V3 unit_center = as_unit(cube_center);
+    V3 y_dir_polar = {
+        .rho = 1,
+        .theta =
+            camera_pos.phi >= PI_2 ? camera_pos.theta : camera_pos.theta + PI,
+        .phi = camera_pos.phi >= PI_2 ? camera_pos.phi - PI_2
+                                      : PI_2 - camera_pos.phi,
+    };
+    V3 y_dir = polar_to_rectangular(y_dir_polar);
+    V3 x_dir = cross(unit_center, y_dir);
+
+    V3 x_loc = add(UNIT_X_AXIS, cube_center);
+    V3 y_loc = add(UNIT_Y_AXIS, cube_center);
+    V3 z_loc = add(UNIT_Z_AXIS, cube_center);
+
+    return (BasisInformation){
+        .x_dir = x_dir,
+        .y_dir = y_dir,
+        .z_dir = unit_center,
+        .screen_x_dir = to_screen_coords(x_loc, x_dir, y_dir),
+        .screen_y_dir = to_screen_coords(y_loc, x_dir, y_dir),
+        .screen_z_dir = to_screen_coords(z_loc, x_dir, y_dir),
+    };
+}
+
+static inline V2 pixel_to_screen(V2 pixel, V2 dims) {
+    float mx = pixel.x;
+    float my = pixel.y;
+    float ww = dims.x;
+    float wh = dims.y;
+    float factor = sqrt(ww * ww + wh * wh);
+
+    return (V2){
+        .x = (-1.0f * ww + 2.0f * mx) / factor,
+        .y = (+1.0f * wh - 2.0f * my) / factor,
+    };
+}
+
+static void update_from_user_input(State *state, StateUpdate s_update) {
     double delta_time = s_update.delta_time;
     double new_rho, new_theta, new_phi;
 
@@ -584,73 +653,75 @@ static void update(Application *app, StateUpdate s_update) {
     }
 
     if (s_update.set_depth) {
-        app->state.rotate_depth = s_update.rotate_depth;
+        state->rotate_depth = s_update.rotate_depth;
     }
 
     if (s_update.rotate_front) {
-        rotate_front(app->state.cube, app->state.rotate_depth, 1);
+        rotate_front(state->cube, state->rotate_depth, 1);
     }
 
     if (s_update.set_face) {
         FaceColor clamped_fc =
             DANGEROUS_CLAMP(0, s_update.target_face, FC_Count - 1);
 
-        set_facing_side(app->state.cube, clamped_fc);
+        set_facing_side(state->cube, clamped_fc);
     }
 
     if (s_update.window_resized) {
-        app->state.window_width = s_update.window_width;
-        app->state.window_height = s_update.window_height;
+        state->window_width = s_update.window_width;
+        state->window_height = s_update.window_height;
+    }
+
+    if (s_update.toggle_mouse_click) {
+        state->mouse_held = 1 - state->mouse_held;
     }
 
     if (s_update.mouse_moved) {
-        app->state.screen_mouse_x = s_update.mouse_x;
-        app->state.screen_mouse_y = s_update.mouse_y;
+        state->screen_mouse_x = s_update.mouse_x;
+        state->screen_mouse_y = s_update.mouse_y;
     }
 
     if (s_update.window_resized || s_update.mouse_moved) {
-        float mx = app->state.screen_mouse_x;
-        float my = app->state.screen_mouse_y;
-        float ww = app->state.window_width;
-        float wh = app->state.window_height;
-        float factor = sqrt(ww * ww + wh * wh);
+        V2 pixel = {.x = state->screen_mouse_x, .y = state->screen_mouse_y};
+        V2 dims = {.x = state->window_width, .y = state->window_height};
 
-        app->state.mouse = (V2){
-            .x = (-1.0f * ww + 2.0f * mx) / factor,
-            .y = (+1.0f * wh - 2.0f * my) / factor,
-        };
+        state->mouse = pixel_to_screen(pixel, dims);
     }
+}
 
-    V3 mouse_3 = {
-        .x = app->state.mouse.x,
-        .y = app->state.mouse.y,
-        .z = CAMERA_SCREEN_DIST,
-    };
+static inline void force_point_to_cube(V3 *point) {
+    float epsilon = 1e-6f;
 
-    CubeModel *cube_model = &app->gl_info.cube_model;
-    V3 camera_pos = {
-        .rho = app->state.camera.rho,
-        .theta = app->state.camera.theta,
-        .phi = app->state.camera.phi,
-    };
-    V3 minus_center = polar_to_rectangular(camera_pos);
-    V3 cube_center = scale(minus_center, -1.0);
-    V3 unit_center = as_unit(cube_center);
-    V3 y_dir_polar = {
-        .rho = 1,
-        .theta =
-            camera_pos.phi >= PI_2 ? camera_pos.theta : camera_pos.theta + PI,
-        .phi = camera_pos.phi >= PI_2 ? camera_pos.phi - PI_2
-                                      : PI_2 - camera_pos.phi,
-    };
-    V3 y_dir = polar_to_rectangular(y_dir_polar);
-    V3 x_dir = cross(unit_center, y_dir);
-    V3 mouse_in_world = compose(mouse_3, x_dir, y_dir, unit_center);
+    if (fabsf(point->x - 1.0f) < epsilon) {
+        point->x = +1.0f;
+    }
+    if (fabsf(point->x + 1.0f) < epsilon) {
+        point->x = -1.0f;
+    }
+    if (fabsf(point->y - 1.0f) < epsilon) {
+        point->y = +1.0f;
+    }
+    if (fabsf(point->y + 1.0f) < epsilon) {
+        point->y = -1.0f;
+    }
+    if (fabsf(point->z - 1.0f) < epsilon) {
+        point->z = +1.0f;
+    }
+    if (fabsf(point->z + 1.0f) < epsilon) {
+        point->z = -1.0f;
+    }
+}
 
+static int find_intersection(V3 camera_pos, V3 mouse_3,
+                             BasisInformation basis_info, CubeModel *cube_model,
+                             HoverInformation *p_hover_info) {
     int found = 0;
-    FaceColor hover_face;
     float closest_t = INFINITY;
-    V3 closest_intersection = {0};
+    HoverInformation hover_info = {0};
+
+    V3 minus_center = polar_to_rectangular(camera_pos);
+    V3 mouse_in_world =
+        compose(mouse_3, basis_info.x_dir, basis_info.y_dir, basis_info.z_dir);
 
     for (uint32_t ind = 0; ind < cube_model->index_count; ind += 3) {
         float res_t;
@@ -666,20 +737,222 @@ static void update(Application *app, StateUpdate s_update) {
         if (is_intersecting_triangle) {
             if (!found || res_t < closest_t) {
                 found = 1;
-                hover_face = (FaceColor)cube_model->info[ind0].face_num;
                 closest_t = res_t;
-                closest_intersection =
+                hover_info.hover_face =
+                    (FaceColor)cube_model->info[ind0].face_num;
+                hover_info.cube_intersection =
                     add(minus_center, scale(mouse_in_world, closest_t));
             }
         }
     }
 
     if (found) {
-        state->cube_intersection_found = 1;
-        state->hover_face = hover_face;
-        state->cube_intersection = closest_intersection;
+        *p_hover_info = hover_info;
+    }
+
+    return found;
+}
+
+static int matching_direction(BasisInformation basis_info, V3 intersection,
+                              V2 screen_diff, float *r_mag, V3 *res) {
+    float mag = sqrtf(dot2(screen_diff, screen_diff));
+    float inv_mag;
+
+    V2 unit_test;
+    V2 t_one;
+    V2 t_two;
+
+    V3 r_one;
+    V3 r_two;
+
+    float match_one;
+    float match_two;
+    float r_match;
+
+    if (mag == 0.0f) {
+        return 0;
+    }
+
+    inv_mag = 1.0f / mag;
+    unit_test = (V2){
+        .x = screen_diff.x * inv_mag,
+        .y = screen_diff.y * inv_mag,
+    };
+
+    if (intersection.x == +1.0f || intersection.x == -1.0f) {
+        t_one = basis_info.screen_y_dir;
+        t_two = basis_info.screen_z_dir;
+
+        r_one = UNIT_Y_AXIS;
+        r_two = UNIT_Z_AXIS;
+    } else if (intersection.y == +1.0f || intersection.y == -1.0f) {
+        t_one = basis_info.screen_z_dir;
+        t_two = basis_info.screen_x_dir;
+
+        r_one = UNIT_Z_AXIS;
+        r_two = UNIT_X_AXIS;
+    } else if (intersection.z == +1.0f || intersection.z == -1.0f) {
+        t_one = basis_info.screen_x_dir;
+        t_two = basis_info.screen_y_dir;
+
+        r_one = UNIT_X_AXIS;
+        r_two = UNIT_Y_AXIS;
     } else {
-        state->cube_intersection_found = 0;
+        printf("The intersection was not on the cube somehow...\n");
+        return 0;
+    }
+
+    match_one = dot2(t_one, unit_test) / sqrt(dot2(t_one, t_one));
+    match_two = dot2(t_two, unit_test) / sqrt(dot2(t_two, t_two));
+
+    if (fabsf(match_one) > fabsf(match_two)) {
+        *res = r_one;
+        r_match = match_one;
+    } else {
+        *res = r_two;
+        r_match = match_two;
+    }
+
+    if (r_match > 0.0f) {
+        *r_mag = +1.0f;
+    } else {
+        *r_mag = -1.0f;
+    }
+
+    return 1;
+}
+
+static int get_rotation_depth(FaceColor rotation_face, V3 intersection,
+                              size_t cube_size) {
+    float target_coord;
+
+    switch (rotation_face) {
+    case FC_White: {
+        target_coord = -intersection.z;
+    } break;
+    case FC_Red: {
+        target_coord = -intersection.x;
+    } break;
+    case FC_Blue: {
+        target_coord = -intersection.y;
+    } break;
+    case FC_Orange: {
+        target_coord = intersection.x;
+    } break;
+    case FC_Green: {
+        target_coord = intersection.y;
+    } break;
+    case FC_Yellow: {
+        target_coord = intersection.z;
+    } break;
+    default:
+        return 0;
+    }
+
+    target_coord = (float)cube_size * 0.5f * (target_coord + 1.0f);
+    return (int)(target_coord >= cube_size ? cube_size - 1 : target_coord);
+}
+
+static void update_intersection_info(State *state, CubeModel *cube_model,
+                                     uint32_t toggled_click) {
+    V3 camera_pos = {
+        .rho = state->camera.rho,
+        .theta = state->camera.theta,
+        .phi = state->camera.phi,
+    };
+
+    V3 mouse_3 = {
+        .x = state->mouse.x,
+        .y = state->mouse.y,
+        .z = CAMERA_SCREEN_DIST,
+    };
+
+    BasisInformation basis_info = get_basis_information(camera_pos);
+    int found = 0;
+
+    state->basis_info = basis_info;
+
+    if (toggled_click || !state->mouse_held) {
+        HoverInformation hover_info;
+        found = find_intersection(camera_pos, mouse_3, basis_info, cube_model,
+                                  &hover_info);
+
+        if (found) {
+            state->cube_intersection_found = 1;
+            state->hover_info = hover_info;
+        } else {
+            state->cube_intersection_found = 0;
+        }
+    }
+
+    if (toggled_click) {
+        if (state->mouse_held) {
+            state->click_info = (ClickInformation){
+                .hover_info = state->hover_info,
+                .screen_x = state->screen_mouse_x,
+                .screen_y = state->screen_mouse_y,
+            };
+        } else {
+            V3 intersection = state->click_info.hover_info.cube_intersection;
+            V2 diff_vec = {
+                .x = (float)state->screen_mouse_x -
+                     (float)state->click_info.screen_x +
+                     0.5f * (float)state->window_width,
+                .y = (float)state->screen_mouse_y -
+                     (float)state->click_info.screen_y +
+                     0.5f * (float)state->window_height,
+            };
+            V2 dims = {.x = state->window_width, .y = state->window_height};
+
+            V2 screen_diff = pixel_to_screen(diff_vec, dims);
+
+            V3 matched_dir;
+            float matched_mag;
+            int matched;
+
+            force_point_to_cube(&intersection);
+            matched = matching_direction(basis_info, intersection, screen_diff,
+                                         &matched_mag, &matched_dir);
+
+            if (matched) {
+                V3 face_center = point_to_face_center(intersection);
+                // FaceColor intersected_face = get_cube_face(face_center);
+
+                V3 matched_dir_mult = scale(matched_dir, matched_mag);
+                V3 rotation_axis = cross(face_center, matched_dir_mult);
+                FaceColor rotation_face = get_cube_face(rotation_axis);
+
+                int rotation_depth = get_rotation_depth(
+                    rotation_face, intersection, get_side_count(state->cube));
+                set_facing_side(state->cube, rotation_face);
+                rotate_front(state->cube, rotation_depth, 0);
+            }
+        }
+
+        if (found) {
+            state->mouse_clicked_cube = 1;
+        } else {
+            state->mouse_clicked_cube = 0;
+        }
+    }
+}
+
+static void update(Application *app, StateUpdate s_update) {
+    State *state = &app->state;
+    CubeModel *cube_model = &app->gl_info.cube_model;
+
+    update_from_user_input(state, s_update);
+    update_intersection_info(state, cube_model, s_update.toggle_mouse_click);
+
+    if (print_a_thing) {
+        printf(
+            "\nScreen dirs:\n"
+            "x_axis = {.x = %f, .y = %f}\n"
+            "y_axis = {.x = %f, .y = %f}\n"
+            "z_axis = {.x = %f, .y = %f}\n",
+            state->basis_info.screen_x_dir.x, state->basis_info.screen_x_dir.y,
+            state->basis_info.screen_y_dir.x, state->basis_info.screen_y_dir.y,
+            state->basis_info.screen_z_dir.x, state->basis_info.screen_z_dir.y);
     }
 
     app->last_ticks = s_update.ticks;
@@ -795,7 +1068,10 @@ static int render_cube(Application const *app, V2 dim_vec) {
 
     Camera const *camera = &app->state.camera;
     V3 camera_pos = {
-        .rho = camera->rho, .theta = camera->theta, .phi = camera->phi};
+        .rho = camera->rho,
+        .theta = camera->theta,
+        .phi = camera->phi,
+    };
 
     V3 minus_center = polar_to_rectangular(camera_pos);
     V3 cube_center = scale(minus_center, -1.0);
@@ -857,7 +1133,7 @@ static int render_cube(Application const *app, V2 dim_vec) {
             int ind12 = cube_model->indices[ind + 5];
 
             if ((FaceColor)cube_model->info[ind00].face_num !=
-                app->state.hover_face) {
+                app->state.hover_info.hover_face) {
                 // can skip this one because we aren't even looking at the right
                 // face
                 continue;
@@ -867,12 +1143,12 @@ static int render_cube(Application const *app, V2 dim_vec) {
             V3 minus_a1 = scale(cube_model->info[ind10].position, -1.0f);
 
             int is_intersecting_triangle0 = inside_triangle(
-                add(app->state.cube_intersection, minus_a0),
+                add(app->state.hover_info.cube_intersection, minus_a0),
                 add(cube_model->info[ind01].position, minus_a0),
                 add(cube_model->info[ind02].position, minus_a0));
 
             int is_intersecting_triangle1 = inside_triangle(
-                add(app->state.cube_intersection, minus_a1),
+                add(app->state.hover_info.cube_intersection, minus_a1),
                 add(cube_model->info[ind11].position, minus_a1),
                 add(cube_model->info[ind12].position, minus_a1));
 
@@ -892,11 +1168,11 @@ static int render_cube(Application const *app, V2 dim_vec) {
                         "%f, .z = %f}\nc0 = {.x = %f, .y = %f, .z = %f}\n"
                         "a1 = {.x = %f, .y = %f, .z = %f}\nb1 = {.x = %f, .y = "
                         "%f, .z = %f}\nc1 = {.x = %f, .y = %f, .z = %f}\n\n",
-                        app->state.cube_intersection.x,
-                        app->state.cube_intersection.y,
-                        app->state.cube_intersection.z, a0.x, a0.y, a0.z, b0.x,
-                        b0.y, b0.z, c0.x, c0.y, c0.z, a1.x, a1.y, a1.z, b1.x,
-                        b1.y, b1.z, c1.x, c1.y, c1.z);
+                        app->state.hover_info.cube_intersection.x,
+                        app->state.hover_info.cube_intersection.y,
+                        app->state.hover_info.cube_intersection.z, a0.x, a0.y,
+                        a0.z, b0.x, b0.y, b0.z, c0.x, c0.y, c0.z, a1.x, a1.y,
+                        a1.z, b1.x, b1.y, b1.z, c1.x, c1.y, c1.z);
                 }
 
                 attributes[ind00].intersecting = 1.0f;
