@@ -14,6 +14,15 @@ struct cube {
     FaceColor *squares;
 };
 
+static FaceColor opposite_faces[FC_Count] = {
+    [FC_White] = FC_Yellow, //
+    [FC_Red] = FC_Orange,   //
+    [FC_Blue] = FC_Green,   //
+    [FC_Orange] = FC_Red,   //
+    [FC_Green] = FC_Blue,   //
+    [FC_Yellow] = FC_White, //
+};
+
 static void initialize_cube(Cube *cube);
 static uint32_t get_face_in_dir(Cube *cube, int dir, int *from_dir);
 static inline FaceColor get_at_rc(FaceColor *colors, uint32_t sides,
@@ -70,9 +79,14 @@ void rotate_front(Cube *cube, uint32_t depth, int clockwise) {
     uint32_t sides = cube->sides;
     uint32_t colors_per_side = sides * sides;
 
-    // rotate the squares on the front
-    if (depth == 0) {
-        FaceColor *face = cube->squares + (cube->facing_side * colors_per_side);
+    // rotate the squares on the front (or back)
+    if (depth == 0 || depth == sides - 1) {
+        FaceColor rotation_center =
+            depth == 0 ? cube->facing_side : opposite_faces[cube->facing_side];
+        // reverse the rotation when rotating the back face
+        int clockwise_colors = depth == 0 ? clockwise : !clockwise;
+
+        FaceColor *face = cube->squares + (rotation_center * colors_per_side);
         for (uint32_t d = 0; d < sides / 2; ++d) {
             for (uint32_t c = d; c < (sides - 1) - d; ++c) {
                 FaceColor ul = get_at_rc(face, sides, d, c, 0);
@@ -81,7 +95,7 @@ void rotate_front(Cube *cube, uint32_t depth, int clockwise) {
                 FaceColor bl = get_at_rc(face, sides, d, c, 3);
 
                 FaceColor tmp = ul;
-                if (clockwise) {
+                if (clockwise_colors) {
                     ul = bl;
                     bl = br;
                     br = ur;
