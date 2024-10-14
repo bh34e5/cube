@@ -21,6 +21,7 @@ FILES=main.c \
 			my_math.c \
 			memory.c
 OBJS=$(patsubst %.c,$(BUILD)/%.o,$(FILES))
+DEPS=$(patsubst %.c,$(BUILD)/%.d,$(FILES))
 
 SDL_CONFIG=$(shell sdl2-config --cflags --libs)
 
@@ -32,7 +33,7 @@ $(TARGET): $(OBJS)
 	$(CC) -o $@ $^ $(SDL_CONFIG) -lm -lGLEW -lGLU -lGL
 
 $(BUILD)/%.o: $(SRC)/%.c | $(BUILD)
-	$(CC) $(CFLAGS) $(foreach D,$(INCLUDE),-I$(D)) -c -o $@ $< $(SDL_CONFIG)
+	$(CC) $(CFLAGS) -MMD $(foreach D,$(INCLUDE),-I$(D)) -c -o $@ $< $(SDL_CONFIG)
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -40,3 +41,5 @@ $(BUILD):
 clean:
 	rm -f $(TARGET)
 	rm -r $(BUILD)
+
+-include $(DEPS)
