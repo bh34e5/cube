@@ -64,8 +64,6 @@ typedef struct {
     Camera camera;
 
     BasisInformation basis_info;
-
-    Cube *cube;
 } State;
 
 typedef struct {
@@ -114,20 +112,17 @@ typedef struct {
 
     int *indices;
     uint32_t index_count;
-} CubeModel;
 
-typedef struct {
-    SDL_GLContext *gl_context;
-    GLuint gl_program;
-
-    CubeModel cube_model;
-} Application_GL_Info;
+    Cube *cube;
+} GraphicsCube;
 
 typedef struct {
     SDL_Window *window;
     Uint32 last_ticks;
 
-    Application_GL_Info gl_info;
+    SDL_GLContext *gl_context;
+    GLuint gl_program;
+    GraphicsCube cube;
 
     Arena *arena;
     State state;

@@ -38,7 +38,7 @@ static Camera get_initial_camera(void) {
     };
 }
 
-static State get_initial_state(Cube *cube) {
+static State get_initial_state(void) {
     return (State){
         .theta_rot_dir = 1.0,
         .phi_rot_dir = 1.0,
@@ -64,15 +64,16 @@ static State get_initial_state(Cube *cube) {
         .camera = get_initial_camera(),
 
         .basis_info = {{{{0}}}},
-
-        .cube = cube,
     };
 }
 
 static int sdl_init(SDL_Window **window) {
     int ret = 0;
 
-    CLEANUP_IF(SDL_Init(SDL_INIT_VIDEO) < 0, "Failed to init SDL\n");
+    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+        fprintf(stderr, "Failed to init SDL\n");
+        goto init_fail;
+    }
 
     // use OpenGL 4.2 Core profile
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
@@ -89,17 +90,20 @@ static int sdl_init(SDL_Window **window) {
                                SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN |
                                    SDL_WINDOW_RESIZABLE);
 
-    CLEANUP_IF(*window == NULL, "Failed to create window\n");
-
-cleanup:
-    if (ret != 0) {
-        if (*window != NULL) {
-            SDL_DestroyWindow(*window);
-        }
-
-        SDL_Quit();
+    if (*window == NULL) {
+        fprintf(stderr, "Failed to create window\n");
+        goto create_fail;
     }
 
+    return ret;
+
+create_fail:
+    ret += 1;
+    SDL_DestroyWindow(*window);
+    SDL_Quit();
+
+init_fail:
+    ret += 1;
     return ret;
 }
 
@@ -111,16 +115,24 @@ static int load_file(char const *filename, long *size, char **p_contents) {
     unsigned long n_read;
 
     f = fopen(filename, "r");
+    if (f == NULL) {
+        fprintf(stderr, "Failed to open file for reading\n");
+        goto open_fail;
+    }
 
+    // TODO: maybe these can fail too? they return int...
     fseek(f, 0, SEEK_END);
     f_len = ftell(f);
     fseek(f, 0, SEEK_SET);
 
     contents = (char *)malloc((sizeof(char) * f_len) + 1);
 
-    CLEANUP_IF(contents == NULL,
-               "Failed to alloc buffer for file contents. Wanted %lu bytes.\n",
-               f_len);
+    if (contents == NULL) {
+        fprintf(stderr,
+                "Failed to alloc buffer for file contents. Wanted %lu bytes.\n",
+                f_len);
+        goto contents_malloc_fail;
+    }
 
     *p_contents = contents;
     *size = f_len;
@@ -128,21 +140,25 @@ static int load_file(char const *filename, long *size, char **p_contents) {
     // read a single block of file length because we need the whole file
     n_read = fread(contents, f_len, 1, f);
 
-    CLEANUP_IF(n_read != 1, "Failed to read file contents\n");
+    if (n_read != 1) {
+        fprintf(stderr, "Failed to read file contents\n");
+        goto read_fail;
+    }
 
     contents[f_len] = '\0';
 
-cleanup:
-    if (ret != 0) {
-        if (contents != NULL) {
-            free(contents);
-        }
+    return ret;
 
-        if (f != NULL) {
-            fclose(f);
-        }
-    }
+read_fail:
+    ret += 1;
+    free(contents);
 
+contents_malloc_fail:
+    ret += 1;
+    fclose(f);
+
+open_fail:
+    ret += 1;
     return ret;
 }
 
@@ -201,52 +217,76 @@ static int load_cube_shader_programs(GLuint *gl_program) {
     char *frag_contents = NULL;
     long vert_size, frag_size;
 
-    CLEANUP_IF(load_file(VERTEX_SHADER_NAME, &vert_size, &vert_contents) != 0,
-               "Failed to load vertex shader contents\n");
+    if (load_file(VERTEX_SHADER_NAME, &vert_size, &vert_contents) != 0) {
+        fprintf(stderr, "Failed to load vertex shader contents\n");
+        goto vert_load_fail;
+    }
 
-    CLEANUP_IF(load_file(FRAGMENT_SHADER_NAME, &frag_size, &frag_contents) != 0,
-               "Failed to load fragment shader contents\n");
+    if (load_file(FRAGMENT_SHADER_NAME, &frag_size, &frag_contents) != 0) {
+        fprintf(stderr, "Failed to load fragment shader contents\n");
+        goto frag_load_fail;
+    }
 
-    CLEANUP_IF(gl_load_shader(&vert_shader, GL_VERTEX_SHADER,
-                              (GLchar const *)vert_contents) < 0,
-               "Failed to load vertex shader\n");
+    if (gl_load_shader(&vert_shader, GL_VERTEX_SHADER,
+                       (GLchar const *)vert_contents) < 0) {
+        fprintf(stderr, "Failed to load vertex shader\n");
+        goto vert_load_fail_2;
+    }
 
-    CLEANUP_IF(gl_load_shader(&frag_shader, GL_FRAGMENT_SHADER,
-                              (GLchar const *)frag_contents) < 0,
-               "Failed to load fragment shader\n");
+    if (gl_load_shader(&frag_shader, GL_FRAGMENT_SHADER,
+                       (GLchar const *)frag_contents) < 0) {
+        fprintf(stderr, "Failed to load fragment shader\n");
+        goto frag_load_fail_2;
+    }
 
-    CLEANUP_IF(gl_link_program(gl_program, vert_shader, frag_shader) < 0,
-               "Failed to link program\n");
+    if (gl_link_program(gl_program, vert_shader, frag_shader) < 0) {
+        fprintf(stderr, "Failed to link program\n");
+        goto link_fail;
+    }
 
     // after linking, it's okay to delete these
     glDeleteShader(vert_shader);
     glDeleteShader(frag_shader);
 
-cleanup:
-    if (vert_contents != NULL) {
-        free(vert_contents);
-    }
-    if (frag_contents != NULL) {
-        free(frag_contents);
-    }
+    return ret;
 
+link_fail:
+    ret += 1;
+
+frag_load_fail_2:
+    ret += 1;
+
+vert_load_fail_2:
+    ret += 1;
+    free(frag_contents);
+
+frag_load_fail:
+    ret += 1;
+    free(vert_contents);
+
+vert_load_fail:
+    ret += 1;
     return ret;
 }
 
-static int gl_init(SDL_Window *window, Application_GL_Info *gl_info) {
+static int gl_init(SDL_Window *window, SDL_GLContext **p_gl_context,
+                   GLuint *p_gl_program, GraphicsCube *cube) {
     int ret = 0;
     SDL_GLContext context = NULL;
     GLenum glew_error;
     GLuint gl_program;
 
-    CubeModel cube_model = {0};
-
     context = SDL_GL_CreateContext(window);
-    CLEANUP_IF(context == NULL, "Could not create OpenGL context\n");
+    if (context == NULL) {
+        fprintf(stderr, "Could not create OpenGL context\n");
+        goto context_fail;
+    }
 
-    CLEANUP_IF((glew_error = glewInit()) != GLEW_OK,
-               "Failed to initialize GLEW: %s\n",
-               glewGetErrorString(glew_error));
+    if ((glew_error = glewInit()) != GLEW_OK) {
+        fprintf(stderr, "Failed to initialize GLEW: %s\n",
+                glewGetErrorString(glew_error));
+        goto glew_init_fail;
+    }
 
     // TODO: figure out if this should be +1 or -1
     SDL_GL_SetSwapInterval(-1);
@@ -261,75 +301,81 @@ static int gl_init(SDL_Window *window, Application_GL_Info *gl_info) {
     gl_debug_init();
 #endif
 
-    CLEANUP_IF(load_cube_shader_programs(&gl_program),
-               "Failed to link cube shader program\n");
+    if (load_cube_shader_programs(&gl_program)) {
+        fprintf(stderr, "Failed to link cube shader program\n");
+        goto shader_load_fail;
+    }
 
     glUseProgram(gl_program);
 
-    glGenVertexArrays(1, &cube_model.vao);
-    glGenBuffers(2, cube_model.vbo);
-    glGenBuffers(1, &cube_model.ebo);
-    glGenTextures(1, &cube_model.texture);
+    glGenVertexArrays(1, &cube->vao);
+    glGenBuffers(2, cube->vbo);
+    glGenBuffers(1, &cube->ebo);
+    glGenTextures(1, &cube->texture);
 
-    *gl_info = (Application_GL_Info){
-        .gl_context = context,
-        .gl_program = gl_program,
-        .cube_model = cube_model,
-    };
+    *p_gl_context = context;
+    *p_gl_program = gl_program;
 
-cleanup:
-    if (ret != 0) {
-        if (cube_model.texture != 0) {
-            glDeleteTextures(1, &cube_model.texture);
-        }
+    return ret;
 
-        if (cube_model.ebo != 0) {
-            glDeleteBuffers(1, &cube_model.ebo);
-        }
+    // I suppose there's nothing that can fail between these getting created and
+    // returning from the function...
 
-        if (cube_model.vbo[0] != 0) {
-            glDeleteBuffers(2, cube_model.vbo);
-        }
-
-        if (cube_model.vao != 0) {
-            glDeleteVertexArrays(1, &cube_model.vao);
-        }
-
-        if (gl_program != 0) {
-            glDeleteProgram(gl_program);
-        }
-
-        if (context != NULL) {
-            SDL_GL_DeleteContext(context);
-        }
+    if (cube->texture != 0) {
+        glDeleteTextures(1, &cube->texture);
     }
 
+    if (cube->ebo != 0) {
+        glDeleteBuffers(1, &cube->ebo);
+    }
+
+    if (cube->vbo[0] != 0) {
+        glDeleteBuffers(2, cube->vbo);
+    }
+
+    if (cube->vao != 0) {
+        glDeleteVertexArrays(1, &cube->vao);
+    }
+
+    if (gl_program != 0) {
+        glDeleteProgram(gl_program);
+    }
+
+shader_load_fail:
+    ret += 1;
+
+glew_init_fail:
+    ret += 1;
+    SDL_GL_DeleteContext(context);
+
+context_fail:
+    ret += 1;
     return ret;
 }
 
 static void app_cleanup(Application *app) {
-    if (app->gl_info.cube_model.texture != 0) {
-        glDeleteTextures(1, &app->gl_info.cube_model.texture);
+    if (app->cube.texture != 0) {
+        glDeleteTextures(1, &app->cube.texture);
     }
 
-    if (app->gl_info.cube_model.ebo != 0) {
-        glDeleteBuffers(1, &app->gl_info.cube_model.ebo);
+    if (app->cube.ebo != 0) {
+        glDeleteBuffers(1, &app->cube.ebo);
     }
 
-    if (app->gl_info.cube_model.vbo[0] != 0) {
-        glDeleteBuffers(2, app->gl_info.cube_model.vbo);
+    if (app->cube.vbo[0] != 0) {
+        glDeleteBuffers(2, app->cube.vbo);
     }
 
-    if (app->gl_info.cube_model.vao != 0) {
-        glDeleteVertexArrays(1, &app->gl_info.cube_model.vao);
+    if (app->cube.vao != 0) {
+        glDeleteVertexArrays(1, &app->cube.vao);
     }
 
-    if (app->gl_info.gl_program != 0) {
-        glDeleteProgram(app->gl_info.gl_program);
+    if (app->gl_program != 0) {
+        glDeleteProgram(app->gl_program);
     }
 
-    if (app->gl_info.gl_context != NULL) {
-        SDL_GL_DeleteContext(app->gl_info.gl_context);
+    if (app->gl_context != NULL) {
+        SDL_GL_DeleteContext(app->gl_context);
     }
 
     if (app->window != NULL) {
@@ -575,10 +621,10 @@ static BasisInformation get_basis_information(V3 camera_pos) {
     V3 unit_center = as_unit(cube_center);
     V3 y_dir_polar = {
         .rho = 1,
-        .theta =
-            camera_pos.phi >= PI_2 ? camera_pos.theta : camera_pos.theta + PI,
-        .phi = camera_pos.phi >= PI_2 ? camera_pos.phi - PI_2
-                                      : PI_2 - camera_pos.phi,
+        .theta = camera_pos.phi >= PI_2 ? camera_pos.theta       //
+                                        : camera_pos.theta + PI, //
+        .phi = camera_pos.phi >= PI_2 ? camera_pos.phi - PI_2    //
+                                      : PI_2 - camera_pos.phi,   //
     };
     V3 y_dir = polar_to_rectangular(y_dir_polar);
     V3 x_dir = cross(unit_center, y_dir);
@@ -610,7 +656,8 @@ static inline V2 pixel_to_screen(V2 pixel, V2 dims) {
     };
 }
 
-static void update_from_user_input(State *state, StateUpdate s_update) {
+static void update_from_user_input(State *state, Cube *cube,
+                                   StateUpdate s_update) {
     double delta_time = s_update.delta_time;
     double new_rho, new_theta, new_phi;
 
@@ -657,14 +704,14 @@ static void update_from_user_input(State *state, StateUpdate s_update) {
     }
 
     if (s_update.rotate_front) {
-        rotate_front(state->cube, state->rotate_depth, 1);
+        rotate_front(cube, state->rotate_depth, 1);
     }
 
     if (s_update.set_face) {
         FaceColor clamped_fc =
             DANGEROUS_CLAMP(0, s_update.target_face, FC_Count - 1);
 
-        set_facing_side(state->cube, clamped_fc);
+        set_facing_side(cube, clamped_fc);
     }
 
     if (s_update.window_resized) {
@@ -689,7 +736,7 @@ static void update_from_user_input(State *state, StateUpdate s_update) {
     }
 }
 
-static inline void force_point_to_cube(V3 *point) {
+static inline void force_point_to_cube_edge(V3 *point) {
     float epsilon = 1e-6f;
 
     if (fabsf(point->x - 1.0f) < epsilon) {
@@ -713,7 +760,7 @@ static inline void force_point_to_cube(V3 *point) {
 }
 
 static int find_intersection(V3 camera_pos, V3 mouse_3,
-                             BasisInformation basis_info, CubeModel *cube_model,
+                             BasisInformation basis_info, GraphicsCube *cube,
                              HoverInformation *p_hover_info) {
     int found = 0;
     float closest_t = INFINITY;
@@ -723,23 +770,21 @@ static int find_intersection(V3 camera_pos, V3 mouse_3,
     V3 mouse_in_world =
         compose(mouse_3, basis_info.x_dir, basis_info.y_dir, basis_info.z_dir);
 
-    for (uint32_t ind = 0; ind < cube_model->index_count; ind += 3) {
+    for (uint32_t ind = 0; ind < cube->index_count; ind += 3) {
         float res_t;
-        int ind0 = cube_model->indices[ind + 0];
-        int ind1 = cube_model->indices[ind + 1];
-        int ind2 = cube_model->indices[ind + 2];
+        int ind0 = cube->indices[ind + 0];
+        int ind1 = cube->indices[ind + 1];
+        int ind2 = cube->indices[ind + 2];
 
         int is_intersecting_triangle = check_intersection(
-            minus_center, mouse_in_world, cube_model->info[ind0].position,
-            cube_model->info[ind1].position, cube_model->info[ind2].position,
-            &res_t);
+            minus_center, mouse_in_world, cube->info[ind0].position,
+            cube->info[ind1].position, cube->info[ind2].position, &res_t);
 
         if (is_intersecting_triangle) {
             if (!found || res_t < closest_t) {
                 found = 1;
                 closest_t = res_t;
-                hover_info.hover_face =
-                    (FaceColor)cube_model->info[ind0].face_num;
+                hover_info.hover_face = (FaceColor)cube->info[ind0].face_num;
                 hover_info.cube_intersection =
                     add(minus_center, scale(mouse_in_world, closest_t));
             }
@@ -755,6 +800,8 @@ static int find_intersection(V3 camera_pos, V3 mouse_3,
 
 static int matching_direction(BasisInformation basis_info, V3 intersection,
                               V2 screen_diff, float *r_mag, V3 *res) {
+    static float thresh = 1e-3f;
+
     float mag = sqrtf(dot2(screen_diff, screen_diff));
     float inv_mag;
 
@@ -769,7 +816,7 @@ static int matching_direction(BasisInformation basis_info, V3 intersection,
     float match_two;
     float r_match;
 
-    if (mag == 0.0f) {
+    if (fabsf(mag) < thresh) {
         return 0;
     }
 
@@ -802,8 +849,8 @@ static int matching_direction(BasisInformation basis_info, V3 intersection,
         return 0;
     }
 
-    match_one = dot2(t_one, unit_test) / sqrt(dot2(t_one, t_one));
-    match_two = dot2(t_two, unit_test) / sqrt(dot2(t_two, t_two));
+    match_one = dot2(t_one, unit_test) / sqrtf(dot2(t_one, t_one));
+    match_two = dot2(t_two, unit_test) / sqrtf(dot2(t_two, t_two));
 
     if (fabsf(match_one) > fabsf(match_two)) {
         *res = r_one;
@@ -837,13 +884,13 @@ static int get_rotation_depth(FaceColor rotation_face, V3 intersection,
         target_coord = -intersection.y;
     } break;
     case FC_Orange: {
-        target_coord = intersection.x;
+        target_coord = +intersection.x;
     } break;
     case FC_Green: {
-        target_coord = intersection.y;
+        target_coord = +intersection.y;
     } break;
     case FC_Yellow: {
-        target_coord = intersection.z;
+        target_coord = +intersection.z;
     } break;
     default:
         return 0;
@@ -853,7 +900,7 @@ static int get_rotation_depth(FaceColor rotation_face, V3 intersection,
     return (int)(target_coord >= cube_size ? cube_size - 1 : target_coord);
 }
 
-static void update_intersection_info(State *state, CubeModel *cube_model,
+static void update_intersection_info(State *state, GraphicsCube *cube,
                                      uint32_t toggled_click) {
     V3 camera_pos = {
         .rho = state->camera.rho,
@@ -874,7 +921,7 @@ static void update_intersection_info(State *state, CubeModel *cube_model,
 
     if (toggled_click || !state->mouse_held) {
         HoverInformation hover_info;
-        found = find_intersection(camera_pos, mouse_3, basis_info, cube_model,
+        found = find_intersection(camera_pos, mouse_3, basis_info, cube,
                                   &hover_info);
 
         if (found) {
@@ -910,7 +957,7 @@ static void update_intersection_info(State *state, CubeModel *cube_model,
             float matched_mag;
             int matched;
 
-            force_point_to_cube(&intersection);
+            force_point_to_cube_edge(&intersection);
             matched = matching_direction(basis_info, intersection, screen_diff,
                                          &matched_mag, &matched_dir);
 
@@ -923,9 +970,9 @@ static void update_intersection_info(State *state, CubeModel *cube_model,
                 FaceColor rotation_face = get_cube_face(rotation_axis);
 
                 int rotation_depth = get_rotation_depth(
-                    rotation_face, intersection, get_side_count(state->cube));
-                set_facing_side(state->cube, rotation_face);
-                rotate_front(state->cube, rotation_depth, 0);
+                    rotation_face, intersection, get_side_count(cube->cube));
+                set_facing_side(cube->cube, rotation_face);
+                rotate_front(cube->cube, rotation_depth, 0);
             }
         }
 
@@ -939,10 +986,9 @@ static void update_intersection_info(State *state, CubeModel *cube_model,
 
 static void update(Application *app, StateUpdate s_update) {
     State *state = &app->state;
-    CubeModel *cube_model = &app->gl_info.cube_model;
 
-    update_from_user_input(state, s_update);
-    update_intersection_info(state, cube_model, s_update.toggle_mouse_click);
+    update_from_user_input(state, app->cube.cube, s_update);
+    update_intersection_info(state, &app->cube, s_update.toggle_mouse_click);
 
     if (print_a_thing) {
         printf(
@@ -965,7 +1011,7 @@ typedef struct {
 static void write_color_for_face(void *v_buf, FaceColor fc) {
     Color *buf = (Color *)v_buf;
 
-    Color fc_color[FC_Count] = {
+    static Color fc_color[FC_Count] = {
         [FC_White] = {.r = 0xFF, .g = 0xFF, .b = 0xFF},
         [FC_Green] = {.r = 0x00, .g = 0xFF, .b = 0x00},
         [FC_Red] = {.r = 0xFF, .g = 0x00, .b = 0x00},
@@ -979,7 +1025,7 @@ static void write_color_for_face(void *v_buf, FaceColor fc) {
 
 static void create_texture_from_cube(Application const *app, Color **p_texture,
                                      uint32_t *p_width, uint32_t *p_height) {
-    uint32_t side_count = get_side_count(app->state.cube);
+    uint32_t side_count = get_side_count(app->cube.cube);
 
     uint32_t item_size = sizeof(Color);
     uint32_t stride = 4 * side_count;
@@ -1004,7 +1050,7 @@ static void create_texture_from_cube(Application const *app, Color **p_texture,
         texture[i] = clear_color;
     }
 
-    generic_write_cube(app->state.cube, (void *)texture, spacing,
+    generic_write_cube(app->cube.cube, (void *)texture, spacing,
                        write_color_for_face);
 
     *p_texture = texture;
@@ -1061,10 +1107,10 @@ static void get_dirs(V3 x_dir, V3 y_dir, V3 z_dir, V2 *screen_x, V2 *screen_y,
 static int render_cube(Application const *app, V2 dim_vec) {
     int ret = 0;
 
-    GLuint gl_program = app->gl_info.gl_program;
-    uint32_t side_count = get_side_count(app->state.cube);
+    GLuint gl_program = app->gl_program;
+    uint32_t side_count = get_side_count(app->cube.cube);
 
-    CubeModel const *cube_model = &app->gl_info.cube_model;
+    GraphicsCube const *cube = &app->cube;
 
     Camera const *camera = &app->state.camera;
     V3 camera_pos = {
@@ -1104,9 +1150,11 @@ static int render_cube(Application const *app, V2 dim_vec) {
     get_dirs(x_dir, y_dir, unit_center, &screen_x, &screen_y, &screen_z);
 
     VertexAttributes *attributes =
-        ARENA_PUSH_N(VertexAttributes, app->arena, cube_model->vertex_count);
-    CLEANUP_IF(attributes == NULL,
-               "Couldn't allocate space for vertex attribute array\n");
+        ARENA_PUSH_N(VertexAttributes, app->arena, cube->vertex_count);
+    if (attributes == NULL) {
+        fprintf(stderr, "Couldn't allocate space for vertex attribute array\n");
+        goto vertex_alloc_fail;
+    }
 
     if (print_a_thing) {
         printf("mouse_2 = {.x = %f, .y = %f},\nmouse_3 = {.x = %f, .y = %f, .z "
@@ -1119,46 +1167,46 @@ static int render_cube(Application const *app, V2 dim_vec) {
     // TODO: figure out if there is a better way to clear this, since these are
     // all floats... try to figure out how to pass integers into the buffer
     // without breaking everything
-    for (uint32_t ind = 0; ind < cube_model->vertex_count; ++ind) {
+    for (uint32_t ind = 0; ind < cube->vertex_count; ++ind) {
         attributes[ind].intersecting = 0.0f;
     }
 
     if (app->state.cube_intersection_found) {
-        for (uint32_t ind = 0; ind < cube_model->index_count; ind += 6) {
-            int ind00 = cube_model->indices[ind + 0];
-            int ind01 = cube_model->indices[ind + 1];
-            int ind02 = cube_model->indices[ind + 2];
-            int ind10 = cube_model->indices[ind + 3];
-            int ind11 = cube_model->indices[ind + 4];
-            int ind12 = cube_model->indices[ind + 5];
+        for (uint32_t ind = 0; ind < cube->index_count; ind += 6) {
+            int ind00 = cube->indices[ind + 0];
+            int ind01 = cube->indices[ind + 1];
+            int ind02 = cube->indices[ind + 2];
+            int ind10 = cube->indices[ind + 3];
+            int ind11 = cube->indices[ind + 4];
+            int ind12 = cube->indices[ind + 5];
 
-            if ((FaceColor)cube_model->info[ind00].face_num !=
+            if ((FaceColor)cube->info[ind00].face_num !=
                 app->state.hover_info.hover_face) {
                 // can skip this one because we aren't even looking at the right
                 // face
                 continue;
             }
 
-            V3 minus_a0 = scale(cube_model->info[ind00].position, -1.0f);
-            V3 minus_a1 = scale(cube_model->info[ind10].position, -1.0f);
+            V3 minus_a0 = scale(cube->info[ind00].position, -1.0f);
+            V3 minus_a1 = scale(cube->info[ind10].position, -1.0f);
 
             int is_intersecting_triangle0 = inside_triangle(
                 add(app->state.hover_info.cube_intersection, minus_a0),
-                add(cube_model->info[ind01].position, minus_a0),
-                add(cube_model->info[ind02].position, minus_a0));
+                add(cube->info[ind01].position, minus_a0),
+                add(cube->info[ind02].position, minus_a0));
 
             int is_intersecting_triangle1 = inside_triangle(
                 add(app->state.hover_info.cube_intersection, minus_a1),
-                add(cube_model->info[ind11].position, minus_a1),
-                add(cube_model->info[ind12].position, minus_a1));
+                add(cube->info[ind11].position, minus_a1),
+                add(cube->info[ind12].position, minus_a1));
 
             if (is_intersecting_triangle0 || is_intersecting_triangle1) {
-                V3 a0 = cube_model->info[ind00].position;
-                V3 b0 = cube_model->info[ind01].position;
-                V3 c0 = cube_model->info[ind02].position;
-                V3 a1 = cube_model->info[ind10].position;
-                V3 b1 = cube_model->info[ind11].position;
-                V3 c1 = cube_model->info[ind12].position;
+                V3 a0 = cube->info[ind00].position;
+                V3 b0 = cube->info[ind01].position;
+                V3 c0 = cube->info[ind02].position;
+                V3 a1 = cube->info[ind10].position;
+                V3 b1 = cube->info[ind11].position;
+                V3 c1 = cube->info[ind12].position;
 
                 if (print_a_thing) {
                     printf(
@@ -1186,9 +1234,12 @@ static int render_cube(Application const *app, V2 dim_vec) {
     }
 
     create_texture_from_cube(app, &texture, &tex_width, &tex_height);
-    CLEANUP_IF(texture == NULL, "Couldn't allocate space for cube texture\n");
+    if (texture == NULL) {
+        fprintf(stderr, "Couldn't allocate space for cube texture\n");
+        goto texture_alloc_fail;
+    }
 
-    glBindVertexArray(cube_model->vao);
+    glBindVertexArray(cube->vao);
 
     glActiveTexture(GL_TEXTURE0);
     uniform_index = glGetUniformLocation(gl_program, "cube_texture");
@@ -1201,32 +1252,30 @@ static int render_cube(Application const *app, V2 dim_vec) {
     set_cube_uniforms(gl_program, x_dir, y_dir, cube_center, side_count,
                       screen_cube_ratio, dim_vec);
 
-    glBindTexture(GL_TEXTURE_2D, cube_model->texture);
+    glBindTexture(GL_TEXTURE_2D, cube->texture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, tex_width, tex_height, 0, GL_RGB,
                  GL_UNSIGNED_BYTE, texture);
     glGenerateMipmap(GL_TEXTURE_2D);
 
     // fill vertex information buffer
-    glBindBuffer(GL_ARRAY_BUFFER, cube_model->vbo[0]);
-    glBufferData(GL_ARRAY_BUFFER,
-                 cube_model->vertex_count * sizeof(*cube_model->info),
-                 (void const *)cube_model->info, GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, cube->vbo[0]);
+    glBufferData(GL_ARRAY_BUFFER, cube->vertex_count * sizeof(*cube->info),
+                 (void const *)cube->info, GL_STATIC_DRAW);
 
     // specify location of data within buffer
     glVertexAttribPointer(
-        0, 3, GL_FLOAT, GL_FALSE, sizeof(*cube_model->info),
+        0, 3, GL_FLOAT, GL_FALSE, sizeof(*cube->info),
         (GLvoid const *)offsetof(VertexInformation, position));
     glEnableVertexAttribArray(0);
 
     glVertexAttribPointer(
-        1, 1, GL_FLOAT, GL_FALSE, sizeof(*cube_model->info),
+        1, 1, GL_FLOAT, GL_FALSE, sizeof(*cube->info),
         (GLvoid const *)offsetof(VertexInformation, face_num));
     glEnableVertexAttribArray(1);
 
     // fill vertex information buffer
-    glBindBuffer(GL_ARRAY_BUFFER, cube_model->vbo[1]);
-    glBufferData(GL_ARRAY_BUFFER,
-                 cube_model->vertex_count * sizeof(*attributes),
+    glBindBuffer(GL_ARRAY_BUFFER, cube->vbo[1]);
+    glBufferData(GL_ARRAY_BUFFER, cube->vertex_count * sizeof(*attributes),
                  (void const *)attributes, GL_STATIC_DRAW);
 
     // specify location of data within buffer
@@ -1236,15 +1285,21 @@ static int render_cube(Application const *app, V2 dim_vec) {
     glEnableVertexAttribArray(2);
 
     // fill index buffer
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cube_model->ebo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cube->ebo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER,
-                 cube_model->index_count * sizeof(*cube_model->indices),
-                 (void const *)cube_model->indices, GL_STATIC_DRAW);
+                 cube->index_count * sizeof(*cube->indices),
+                 (void const *)cube->indices, GL_STATIC_DRAW);
 
-    glDrawElements(GL_TRIANGLES, cube_model->index_count, GL_UNSIGNED_INT,
+    glDrawElements(GL_TRIANGLES, cube->index_count, GL_UNSIGNED_INT,
                    (void const *)0);
 
-cleanup:
+    return ret;
+
+texture_alloc_fail:
+    ret += 1;
+
+vertex_alloc_fail:
+    ret += 1;
     return ret;
 }
 
@@ -1275,15 +1330,14 @@ static void render(Application const *app) {
 }
 
 static void define_split_vertices(Arena *arena, uint32_t cube_size,
-                                  CubeModel *cube_model) {
+                                  GraphicsCube *cube) {
     uint32_t split_vertex_count =
         CUBE_FACES * (cube_size + 1) * (cube_size + 1);
 
     double factor = 1.0 / (double)cube_size;
 
-    cube_model->vertex_count = split_vertex_count;
-    cube_model->info =
-        ARENA_PUSH_N(VertexInformation, arena, split_vertex_count);
+    cube->vertex_count = split_vertex_count;
+    cube->info = ARENA_PUSH_N(VertexInformation, arena, split_vertex_count);
 
     uint32_t cur_index = 0;
     for (uint32_t face_id = 0; face_id < CUBE_FACES; ++face_id) {
@@ -1295,19 +1349,19 @@ static void define_split_vertices(Arena *arena, uint32_t cube_size,
         V3 target_one = cube_vertices[cube_indices[1]];
         V3 target_two = cube_vertices[cube_indices[3]];
 
-        cube_model->info[cur_index++] = (VertexInformation){
+        cube->info[cur_index++] = (VertexInformation){
             .position = start,
             .face_num = (float)face_id,
         };
 
         for (uint32_t x_i = 1; x_i < cube_size; ++x_i) {
-            cube_model->info[cur_index++] = (VertexInformation){
+            cube->info[cur_index++] = (VertexInformation){
                 .position = v_lerp(start, x_i * factor, target_one),
                 .face_num = (float)face_id,
             };
         }
 
-        cube_model->info[cur_index++] = (VertexInformation){
+        cube->info[cur_index++] = (VertexInformation){
             .position = target_one,
             .face_num = (float)face_id,
         };
@@ -1316,38 +1370,38 @@ static void define_split_vertices(Arena *arena, uint32_t cube_size,
             V3 inner_start = v_lerp(start, y_i * factor, target_two);
             V3 inner_target_one = v_lerp(target_one, y_i * factor, final);
 
-            cube_model->info[cur_index++] = (VertexInformation){
+            cube->info[cur_index++] = (VertexInformation){
                 .position = inner_start,
                 .face_num = (float)face_id,
             };
 
             for (uint32_t x_i = 1; x_i < cube_size; ++x_i) {
-                cube_model->info[cur_index++] = (VertexInformation){
+                cube->info[cur_index++] = (VertexInformation){
                     .position =
                         v_lerp(inner_start, x_i * factor, inner_target_one),
                     .face_num = (float)face_id,
                 };
             }
 
-            cube_model->info[cur_index++] = (VertexInformation){
+            cube->info[cur_index++] = (VertexInformation){
                 .position = inner_target_one,
                 .face_num = (float)face_id,
             };
         }
 
-        cube_model->info[cur_index++] = (VertexInformation){
+        cube->info[cur_index++] = (VertexInformation){
             .position = target_two,
             .face_num = (float)face_id,
         };
 
         for (uint32_t x_i = 1; x_i < cube_size; ++x_i) {
-            cube_model->info[cur_index++] = (VertexInformation){
+            cube->info[cur_index++] = (VertexInformation){
                 .position = v_lerp(target_two, x_i * factor, final),
                 .face_num = (float)face_id,
             };
         }
 
-        cube_model->info[cur_index++] = (VertexInformation){
+        cube->info[cur_index++] = (VertexInformation){
             .position = final,
             .face_num = (float)face_id,
         };
@@ -1355,7 +1409,7 @@ static void define_split_vertices(Arena *arena, uint32_t cube_size,
 }
 
 static void define_split_indices(Arena *arena, uint32_t cube_size,
-                                 CubeModel *cube_model) {
+                                 GraphicsCube *cube) {
     uint32_t expanded_square_vertices =
         VERTEX_COUNT_TO_TRIANGLE_COUNT(SQUARE_CORNERS);
     uint32_t index_count_per_side =
@@ -1363,12 +1417,12 @@ static void define_split_indices(Arena *arena, uint32_t cube_size,
     uint32_t split_index_count = CUBE_FACES * index_count_per_side;
     uint32_t index_stride = cube_size + 1;
 
-    cube_model->index_count = split_index_count;
-    cube_model->indices = ARENA_PUSH_N(int, arena, split_index_count);
+    cube->index_count = split_index_count;
+    cube->indices = ARENA_PUSH_N(int, arena, split_index_count);
 
     for (uint32_t face_id = 0; face_id < CUBE_FACES; ++face_id) {
         uint32_t index_base = face_id * (index_stride * index_stride);
-        int *cur_loc = cube_model->indices + (face_id * index_count_per_side);
+        int *cur_loc = cube->indices + (face_id * index_count_per_side);
 
         for (uint32_t col = 0; col < cube_size; ++col) {
             for (uint32_t row = 0; row < cube_size; ++row) {
@@ -1396,35 +1450,53 @@ int graphics_main(void) {
     uint32_t cube_size = 5;
 
     Arena *arena = NULL;
-    Cube *cube;
+    Cube *cube_state;
     SDL_Window *window = NULL;
-    Application_GL_Info gl_info;
+    SDL_GLContext *gl_context = NULL;
+    GLuint gl_program = 0;
+    GraphicsCube cube = {0};
     Application app;
 
     arena = alloc_arena();
-    CLEANUP_IF(arena == NULL, "Unable to allocate arena\n");
+    if (arena == NULL) {
+        fprintf(stderr, "Unable to allocate arena\n");
+        goto arena_alloc_fail;
+    }
 
-    CLEANUP_IF((sdl_init_ret = sdl_init(&window)) != 0,
-               "Unable to init application with code %d\n", sdl_init_ret);
+    if ((sdl_init_ret = sdl_init(&window)) != 0) {
+        fprintf(stderr, "Unable to init application with code %d\n",
+                sdl_init_ret);
+        goto sdl_init_fail;
+    }
 
-    CLEANUP_IF((gl_init_ret = gl_init(window, &gl_info)) != 0,
-               "Unable to init GLEW and shaders with code %d\n", gl_init_ret);
+    if ((gl_init_ret = gl_init(window, &gl_context, &gl_program, &cube)) != 0) {
+        fprintf(stderr, "Unable to init GLEW and shaders with code %d\n",
+                gl_init_ret);
+        goto gl_init_fail;
+    }
 
-    CLEANUP_IF((cube = new_cube(cube_size)) == NULL,
-               "Could not allocate cube\n");
+    if ((cube_state = new_cube(cube_size)) == NULL) {
+        fprintf(stderr, "Could not allocate cube\n");
+        goto cube_alloc_fail;
+    }
+
+    cube.cube = cube_state;
 
     app = (Application){
         .window = window,
-        .gl_info = gl_info,
         .last_ticks = SDL_GetTicks(),
 
+        .gl_context = gl_context,
+        .gl_program = gl_program,
+        .cube = cube,
+
         .arena = arena,
-        .state = get_initial_state(cube),
+        .state = get_initial_state(),
     };
 
     if (arena_begin(arena) == 0) {
-        define_split_vertices(arena, cube_size, &app.gl_info.cube_model);
-        define_split_indices(arena, cube_size, &app.gl_info.cube_model);
+        define_split_vertices(arena, cube_size, &app.cube);
+        define_split_indices(arena, cube_size, &app.cube);
 
         while (!app.state.should_close) {
             StateUpdate s_update;
@@ -1437,8 +1509,19 @@ int graphics_main(void) {
         arena_pop(arena);
     }
 
-cleanup:
-    app_cleanup(&app);
+    return ret;
 
+cube_alloc_fail:
+    ret += 1;
+
+gl_init_fail:
+    ret += 1;
+
+sdl_init_fail:
+    ret += 1;
+
+arena_alloc_fail:
+    ret += 1;
+    app_cleanup(&app);
     return ret;
 }
