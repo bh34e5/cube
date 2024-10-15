@@ -1332,7 +1332,7 @@ static void render(Application const *app) {
 static void define_split_vertices(Arena *arena, uint32_t cube_size,
                                   GraphicsCube *cube) {
     uint32_t split_vertex_count =
-        CUBE_FACES * (cube_size + 1) * (cube_size + 1);
+        CUBE_FACES * (2 * cube_size) * (2 * cube_size);
 
     double factor = 1.0 / (double)cube_size;
 
@@ -1349,83 +1349,161 @@ static void define_split_vertices(Arena *arena, uint32_t cube_size,
         V3 target_one = cube_vertices[cube_indices[1]];
         V3 target_two = cube_vertices[cube_indices[3]];
 
+        // bottom left
         cube->info[cur_index++] = (VertexInformation){
             .position = start,
             .face_num = (float)face_id,
         };
 
+        // left side
         for (uint32_t x_i = 1; x_i < cube_size; ++x_i) {
+            // two of them to allow for rotation
+            cube->info[cur_index++] = (VertexInformation){
+                .position = v_lerp(start, x_i * factor, target_one),
+                .face_num = (float)face_id,
+            };
+
+            // (the second)
             cube->info[cur_index++] = (VertexInformation){
                 .position = v_lerp(start, x_i * factor, target_one),
                 .face_num = (float)face_id,
             };
         }
 
+        // top left
         cube->info[cur_index++] = (VertexInformation){
             .position = target_one,
             .face_num = (float)face_id,
         };
 
         for (uint32_t y_i = 1; y_i < cube_size; ++y_i) {
-            V3 inner_start = v_lerp(start, y_i * factor, target_two);
-            V3 inner_target_one = v_lerp(target_one, y_i * factor, final);
+            // two of them to allow for rotation
+            {
+                V3 inner_start = v_lerp(start, y_i * factor, target_two);
+                V3 inner_target_one = v_lerp(target_one, y_i * factor, final);
 
-            cube->info[cur_index++] = (VertexInformation){
-                .position = inner_start,
-                .face_num = (float)face_id,
-            };
-
-            for (uint32_t x_i = 1; x_i < cube_size; ++x_i) {
                 cube->info[cur_index++] = (VertexInformation){
-                    .position =
-                        v_lerp(inner_start, x_i * factor, inner_target_one),
+                    .position = inner_start,
+                    .face_num = (float)face_id,
+                };
+
+                for (uint32_t x_i = 1; x_i < cube_size; ++x_i) {
+                    // two of them to allow for rotation
+                    cube->info[cur_index++] = (VertexInformation){
+                        .position =
+                            v_lerp(inner_start, x_i * factor, inner_target_one),
+                        .face_num = (float)face_id,
+                    };
+
+                    // (the second)
+                    cube->info[cur_index++] = (VertexInformation){
+                        .position =
+                            v_lerp(inner_start, x_i * factor, inner_target_one),
+                        .face_num = (float)face_id,
+                    };
+                }
+
+                cube->info[cur_index++] = (VertexInformation){
+                    .position = inner_target_one,
                     .face_num = (float)face_id,
                 };
             }
 
-            cube->info[cur_index++] = (VertexInformation){
-                .position = inner_target_one,
-                .face_num = (float)face_id,
-            };
+            // (the second)
+            {
+                V3 inner_start = v_lerp(start, y_i * factor, target_two);
+                V3 inner_target_one = v_lerp(target_one, y_i * factor, final);
+
+                cube->info[cur_index++] = (VertexInformation){
+                    .position = inner_start,
+                    .face_num = (float)face_id,
+                };
+
+                for (uint32_t x_i = 1; x_i < cube_size; ++x_i) {
+                    // two of them to allow for rotation
+                    cube->info[cur_index++] = (VertexInformation){
+                        .position =
+                            v_lerp(inner_start, x_i * factor, inner_target_one),
+                        .face_num = (float)face_id,
+                    };
+
+                    // (the second)
+                    cube->info[cur_index++] = (VertexInformation){
+                        .position =
+                            v_lerp(inner_start, x_i * factor, inner_target_one),
+                        .face_num = (float)face_id,
+                    };
+                }
+
+                cube->info[cur_index++] = (VertexInformation){
+                    .position = inner_target_one,
+                    .face_num = (float)face_id,
+                };
+            }
         }
 
+        // bottom right
         cube->info[cur_index++] = (VertexInformation){
             .position = target_two,
             .face_num = (float)face_id,
         };
 
+        // right side
         for (uint32_t x_i = 1; x_i < cube_size; ++x_i) {
+            // two of them to allow for rotation
+            cube->info[cur_index++] = (VertexInformation){
+                .position = v_lerp(target_two, x_i * factor, final),
+                .face_num = (float)face_id,
+            };
+
+            // (the second)
             cube->info[cur_index++] = (VertexInformation){
                 .position = v_lerp(target_two, x_i * factor, final),
                 .face_num = (float)face_id,
             };
         }
 
+        // top right
         cube->info[cur_index++] = (VertexInformation){
             .position = final,
             .face_num = (float)face_id,
         };
     }
+
+    if (cur_index != split_vertex_count) {
+        fprintf(stderr, "Wrong vertex count\n");
+    }
+
+#if 1
+    for (uint32_t i = 0; i < cur_index / CUBE_FACES; ++i) {
+        printf("cube->info[%d] = { .position = { .x = %f, .y = %f, .z = %f }, "
+               ".face_num = %d }\n",
+               i, cube->info[i].position.x, cube->info[i].position.y,
+               cube->info[i].position.z, (int)cube->info[i].face_num);
+    }
+#endif
 }
 
 static void define_split_indices(Arena *arena, uint32_t cube_size,
                                  GraphicsCube *cube) {
+    uint32_t two_cs_m_one = 2 * cube_size - 1;
     uint32_t expanded_square_vertices =
         VERTEX_COUNT_TO_TRIANGLE_COUNT(SQUARE_CORNERS);
     uint32_t index_count_per_side =
-        expanded_square_vertices * (cube_size * cube_size);
+        expanded_square_vertices * (two_cs_m_one * two_cs_m_one);
     uint32_t split_index_count = CUBE_FACES * index_count_per_side;
-    uint32_t index_stride = cube_size + 1;
+    uint32_t index_stride = 2 * cube_size;
 
     cube->index_count = split_index_count;
     cube->indices = ARENA_PUSH_N(int, arena, split_index_count);
 
+    uint32_t count = 0;
     for (uint32_t face_id = 0; face_id < CUBE_FACES; ++face_id) {
         uint32_t index_base = face_id * (index_stride * index_stride);
         int *cur_loc = cube->indices + (face_id * index_count_per_side);
 
-        for (uint32_t col = 0; col < cube_size; ++col) {
-            for (uint32_t row = 0; row < cube_size; ++row) {
+        for (uint32_t col = 0; col < two_cs_m_one; ++col) {
+            for (uint32_t row = 0; row < two_cs_m_one; ++row) {
 
                 int face_square_indices[4] = {
                     index_base,                    //
@@ -1437,11 +1515,31 @@ static void define_split_indices(Arena *arena, uint32_t cube_size,
                 expand_vertices_to_triangles(face_square_indices, 4, 4,
                                              cur_loc);
                 cur_loc += expanded_square_vertices;
+                count += expanded_square_vertices;
                 index_base += 1;
             }
             index_base += 1;
         }
     }
+
+    if (count != split_index_count) {
+        fprintf(stderr, "Wrong index count\n");
+    }
+
+#if 1
+    for (uint32_t i = 0;
+         i < cube->index_count / expanded_square_vertices / CUBE_FACES; ++i) {
+        printf("cube->indices[%03d..%03d] = { ", expanded_square_vertices * i,
+               expanded_square_vertices * (i + 1));
+
+        printf(" %02d", cube->indices[expanded_square_vertices * i]);
+        for (uint32_t j = 1; j < expanded_square_vertices; ++j) {
+            printf(", %02d", cube->indices[expanded_square_vertices * i + j]);
+        }
+
+        printf(" }\n");
+    }
+#endif
 }
 
 int graphics_main(void) {
