@@ -34,7 +34,6 @@ Arena *alloc_arena(void) {
 void free_arena(Arena *arena) { free(arena); }
 
 int arena_begin(Arena *arena) {
-    Header *next_header;
 
     if ((arena == NULL) ||
         ((arena->cur->next_byte + sizeof(Header)) - arena->bytes >=
@@ -42,7 +41,7 @@ int arena_begin(Arena *arena) {
         return -1;
     }
 
-    next_header = (Header *)(arena->cur->next_byte);
+    Header *next_header = (Header *)(arena->cur->next_byte);
     *next_header = (Header){
         .prev = arena->cur,
         .next_byte = (char *)(next_header + 1),
@@ -53,14 +52,13 @@ int arena_begin(Arena *arena) {
 }
 
 void *arena_push_size(Arena *arena, uint32_t size, int clear) {
-    void *res;
 
     if ((arena == NULL) ||
         ((arena->cur->next_byte + size) - arena->bytes >= BASE_SIZE)) {
         return NULL;
     }
 
-    res = (void *)arena->cur->next_byte;
+    void *res = (void *)arena->cur->next_byte;
     arena->cur->next_byte += size;
 
     if (clear) {

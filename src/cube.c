@@ -35,16 +35,13 @@ Cube *new_cube(uint32_t sides) {
         return NULL;
     }
 
-    Cube *res = NULL;
-
-    res = (Cube *)malloc(sizeof(Cube));
+    Cube *res = (Cube *)malloc(sizeof(Cube));
     if (res == NULL) {
         return NULL;
     }
 
     uint32_t side_count = 6 * (sides * sides);
     FaceColor *colors = (FaceColor *)malloc(side_count * sizeof(FaceColor));
-
     if (colors == NULL) {
         free(res);
         return NULL;
@@ -81,36 +78,39 @@ void rotate_front(Cube *cube, uint32_t depth, int clockwise) {
 
     // rotate the squares on the front (or back)
     if (depth == 0 || depth == sides - 1) {
-        FaceColor rotation_center =
-            depth == 0 ? cube->facing_side : opposite_faces[cube->facing_side];
+        FaceColor rotation_center =                  //
+            depth == 0                               //
+                ? cube->facing_side                  //
+                : opposite_faces[cube->facing_side]; //
+
         // reverse the rotation when rotating the back face
         int clockwise_colors = depth == 0 ? clockwise : !clockwise;
 
         FaceColor *face = cube->squares + (rotation_center * colors_per_side);
-        for (uint32_t d = 0; d < sides / 2; ++d) {
-            for (uint32_t c = d; c < (sides - 1) - d; ++c) {
-                FaceColor ul = get_at_rc(face, sides, d, c, 0);
-                FaceColor ur = get_at_rc(face, sides, d, c, 1);
-                FaceColor br = get_at_rc(face, sides, d, c, 2);
-                FaceColor bl = get_at_rc(face, sides, d, c, 3);
+        for (uint32_t dep = 0; dep < sides / 2; ++dep) {
+            for (uint32_t col = dep; col < (sides - 1) - dep; ++col) {
+                FaceColor upp_l = get_at_rc(face, sides, dep, col, 0);
+                FaceColor upp_r = get_at_rc(face, sides, dep, col, 1);
+                FaceColor bot_r = get_at_rc(face, sides, dep, col, 2);
+                FaceColor bot_l = get_at_rc(face, sides, dep, col, 3);
 
-                FaceColor tmp = ul;
+                FaceColor tmp = upp_l;
                 if (clockwise_colors) {
-                    ul = bl;
-                    bl = br;
-                    br = ur;
-                    ur = tmp;
+                    upp_l = bot_l;
+                    bot_l = bot_r;
+                    bot_r = upp_r;
+                    upp_r = tmp;
                 } else {
-                    ul = ur;
-                    ur = br;
-                    br = bl;
-                    bl = tmp;
+                    upp_l = upp_r;
+                    upp_r = bot_r;
+                    bot_r = bot_l;
+                    bot_l = tmp;
                 }
 
-                set_at_rc(face, sides, d, c, 0, ul);
-                set_at_rc(face, sides, d, c, 1, ur);
-                set_at_rc(face, sides, d, c, 2, br);
-                set_at_rc(face, sides, d, c, 3, bl);
+                set_at_rc(face, sides, dep, col, 0, upp_l);
+                set_at_rc(face, sides, dep, col, 1, upp_r);
+                set_at_rc(face, sides, dep, col, 2, bot_r);
+                set_at_rc(face, sides, dep, col, 3, bot_l);
             }
         }
     }

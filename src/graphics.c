@@ -107,14 +107,10 @@ init_fail:
     return ret;
 }
 
-static int load_file(char const *filename, long *size, char **p_contents) {
+static int load_file(char const *filename, long *p_size, char **p_contents) {
     int ret = 0;
-    FILE *f = NULL;
-    char *contents = NULL;
-    long f_len;
-    unsigned long n_read;
 
-    f = fopen(filename, "r");
+    FILE *f = fopen(filename, "r");
     if (f == NULL) {
         fprintf(stderr, "Failed to open file for reading\n");
         goto open_fail;
@@ -122,10 +118,10 @@ static int load_file(char const *filename, long *size, char **p_contents) {
 
     // TODO: maybe these can fail too? they return int...
     fseek(f, 0, SEEK_END);
-    f_len = ftell(f);
+    long f_len = ftell(f);
     fseek(f, 0, SEEK_SET);
 
-    contents = (char *)malloc((sizeof(char) * f_len) + 1);
+    char *contents = (char *)malloc((sizeof(char) * f_len) + 1);
 
     if (contents == NULL) {
         fprintf(stderr,
@@ -135,10 +131,10 @@ static int load_file(char const *filename, long *size, char **p_contents) {
     }
 
     *p_contents = contents;
-    *size = f_len;
+    *p_size = f_len;
 
     // read a single block of file length because we need the whole file
-    n_read = fread(contents, f_len, 1, f);
+    unsigned long n_read = fread(contents, f_len, 1, f);
 
     if (n_read != 1) {
         fprintf(stderr, "Failed to read file contents\n");
@@ -162,49 +158,51 @@ open_fail:
     return ret;
 }
 
-static int gl_load_shader(GLuint *ui_shader, GLenum shader_type,
+static int gl_load_shader(GLuint *p_ui_shader, GLenum shader_type,
                           GLchar const *c_shader) {
-    GLint int_test_return;
+    GLuint ui_shader = glCreateShader(shader_type);
+    glShaderSource(ui_shader, 1, &c_shader, NULL);
+    glCompileShader(ui_shader);
 
-    *ui_shader = glCreateShader(shader_type);
-    glShaderSource(*ui_shader, 1, &c_shader, NULL);
-    glCompileShader(*ui_shader);
-
-    glGetShaderiv(*ui_shader, GL_COMPILE_STATUS, &int_test_return);
-    if (int_test_return == GL_FALSE) {
+    GLint test_return;
+    glGetShaderiv(ui_shader, GL_COMPILE_STATUS, &test_return);
+    if (test_return == GL_FALSE) {
         GLchar p_c_info_log[1024];
         int32_t i_error_length;
 
-        glGetShaderInfoLog(*ui_shader, 1024, &i_error_length, p_c_info_log);
+        glGetShaderInfoLog(ui_shader, 1024, &i_error_length, p_c_info_log);
         SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION,
                         "Failed to compile shader: %s\n", p_c_info_log);
-        glDeleteShader(*ui_shader);
+        glDeleteShader(ui_shader);
         return -1;
     }
+
+    *p_ui_shader = ui_shader;
 
     return 0;
 }
 
-static int gl_link_program(GLuint *program, GLuint vertex_shader,
+static int gl_link_program(GLuint *p_program, GLuint vertex_shader,
                            GLuint fragment_shader) {
-    GLint int_test_return;
+    GLuint program = glCreateProgram();
+    glAttachShader(program, vertex_shader);
+    glAttachShader(program, fragment_shader);
+    glLinkProgram(program);
 
-    *program = glCreateProgram();
-    glAttachShader(*program, vertex_shader);
-    glAttachShader(*program, fragment_shader);
-    glLinkProgram(*program);
-
-    glGetProgramiv(*program, GL_LINK_STATUS, &int_test_return);
-    if (int_test_return == GL_FALSE) {
+    GLint test_return;
+    glGetProgramiv(program, GL_LINK_STATUS, &test_return);
+    if (test_return == GL_FALSE) {
         GLchar p_c_info_log[1024];
         int32_t i_error_length;
 
-        glGetShaderInfoLog(*program, 1024, &i_error_length, p_c_info_log);
+        glGetShaderInfoLog(program, 1024, &i_error_length, p_c_info_log);
         SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION,
                         "Failed to link shaders: %s\n", p_c_info_log);
-        glDeleteProgram(*program);
+        glDeleteProgram(program);
         return -1;
     }
+
+    *p_program = program;
 
     return 0;
 }
@@ -272,11 +270,9 @@ vert_load_fail:
 static int gl_init(SDL_Window *window, SDL_GLContext **p_gl_context,
                    GLuint *p_gl_program, GraphicsCube *cube) {
     int ret = 0;
-    SDL_GLContext context = NULL;
     GLenum glew_error;
-    GLuint gl_program;
 
-    context = SDL_GL_CreateContext(window);
+    SDL_GLContext context = SDL_GL_CreateContext(window);
     if (context == NULL) {
         fprintf(stderr, "Could not create OpenGL context\n");
         goto context_fail;
@@ -301,6 +297,7 @@ static int gl_init(SDL_Window *window, SDL_GLContext **p_gl_context,
     gl_debug_init();
 #endif
 
+    GLuint gl_program;
     if (load_cube_shader_programs(&gl_program)) {
         fprintf(stderr, "Failed to link cube shader program\n");
         goto shader_load_fail;
@@ -390,12 +387,12 @@ static void app_cleanup(Application *app) {
 }
 
 static StateUpdate get_inputs(Application const *app) {
-    SDL_Event event;
-    Uint32 last_ticks, ticks;
-    StateUpdate s_update = {0};
-    double cur_delta_ms;
-
+    // clear the print flag for this loop
     print_a_thing = 0;
+
+    StateUpdate s_update = {0};
+
+    SDL_Event event;
     while (SDL_PollEvent(&event) > 0) {
         switch (event.type) {
         case SDL_QUIT: {
@@ -527,10 +524,10 @@ static StateUpdate get_inputs(Application const *app) {
         }
     }
 
-    last_ticks = app->last_ticks;
-    ticks = SDL_GetTicks();
+    Uint32 last_ticks = app->last_ticks;
+    Uint32 ticks = SDL_GetTicks();
 
-    cur_delta_ms = (double)(ticks - last_ticks);
+    double cur_delta_ms = (double)(ticks - last_ticks);
 
     if (cur_delta_ms < target_mspf) {
         double diff = target_mspf - cur_delta_ms;
@@ -548,19 +545,15 @@ static StateUpdate get_inputs(Application const *app) {
 // assumes the point is in the plane of the triangle
 static int inside_triangle(V3 point, V3 ab, V3 ac) {
     V3 bc_perp, cb_perp;
-    V3 ab_perp, ac_perp;
-
-    float x;
-    float y;
 
     decompose(ab, as_unit(ac), &bc_perp);
     decompose(ac, as_unit(ab), &cb_perp);
 
-    ab_perp = scale3(bc_perp, 1.0f / dot(bc_perp, ab));
-    ac_perp = scale3(cb_perp, 1.0f / dot(cb_perp, ac));
+    V3 ab_perp = scale3(bc_perp, 1.0f / dot(bc_perp, ab));
+    V3 ac_perp = scale3(cb_perp, 1.0f / dot(cb_perp, ac));
 
-    x = dot(point, ab_perp);
-    y = dot(point, ac_perp);
+    float x = dot(point, ab_perp);
+    float y = dot(point, ac_perp);
 
     if ((0.0f <= x && x <= 1.0f) && (0.0f <= y && y <= 1.0f) &&
         (x + y <= 1.0f)) {
@@ -663,8 +656,8 @@ static inline V2 pixel_to_screen(V2 pixel, V2 dims) {
 static void update_from_user_input(State *state, Cube *cube,
                                    StateUpdate s_update) {
     double delta_time = s_update.delta_time;
-    double new_rho, new_theta, new_phi;
 
+    double new_rho, new_theta, new_phi;
     new_rho = state->camera.rho +
               s_update.camera_rho_dir * delta_time * RHO_PIXELS_PER_SEC;
     new_theta = state->camera.theta +
@@ -808,31 +801,24 @@ static int find_intersection(V3 camera_pos, V3 mouse_3,
 
 static int matching_direction(BasisInformation basis_info, V3 intersection,
                               V2 screen_diff, float *r_mag, V3 *res) {
-    static float thresh = 1e-3f;
+    static float const thresh = 1e-3f;
 
     float mag = sqrtf(dot2(screen_diff, screen_diff));
-    float inv_mag;
+    if (fabsf(mag) < thresh) {
+        return 0;
+    }
 
-    V2 unit_test;
+    float inv_mag = 1.0f / mag;
+    V2 unit_test = {
+        .x = screen_diff.x * inv_mag,
+        .y = screen_diff.y * inv_mag,
+    };
+
     V2 t_one;
     V2 t_two;
 
     V3 r_one;
     V3 r_two;
-
-    float match_one;
-    float match_two;
-    float r_match;
-
-    if (fabsf(mag) < thresh) {
-        return 0;
-    }
-
-    inv_mag = 1.0f / mag;
-    unit_test = (V2){
-        .x = screen_diff.x * inv_mag,
-        .y = screen_diff.y * inv_mag,
-    };
 
     if (intersection.x == +1.0f || intersection.x == -1.0f) {
         t_one = basis_info.screen_y_dir;
@@ -857,8 +843,10 @@ static int matching_direction(BasisInformation basis_info, V3 intersection,
         return 0;
     }
 
-    match_one = dot2(t_one, unit_test) / sqrtf(dot2(t_one, t_one));
-    match_two = dot2(t_two, unit_test) / sqrtf(dot2(t_two, t_two));
+    float match_one = dot2(t_one, unit_test) / sqrtf(dot2(t_one, t_one));
+    float match_two = dot2(t_two, unit_test) / sqrtf(dot2(t_two, t_two));
+
+    float r_match;
 
     if (fabsf(match_one) > fabsf(match_two)) {
         *res = r_one;
@@ -916,18 +904,18 @@ static void update_intersection_info(State *state, GraphicsCube *cube,
         .phi = state->camera.phi,
     };
 
-    V3 mouse_3 = {
-        .x = state->mouse.x,
-        .y = state->mouse.y,
-        .z = CAMERA_SCREEN_DIST,
-    };
-
     BasisInformation basis_info = get_basis_information(camera_pos);
     int found = 0;
 
     state->basis_info = basis_info;
 
     if (toggled_click || !state->mouse_held) {
+        V3 mouse_3 = {
+            .x = state->mouse.x,
+            .y = state->mouse.y,
+            .z = CAMERA_SCREEN_DIST,
+        };
+
         HoverInformation hover_info;
         found = find_intersection(camera_pos, mouse_3, basis_info, cube,
                                   &hover_info);
@@ -948,7 +936,6 @@ static void update_intersection_info(State *state, GraphicsCube *cube,
                 .screen_y = state->screen_mouse_y,
             };
         } else {
-            V3 intersection = state->click_info.hover_info.cube_intersection;
             V2 diff_vec = {
                 .x = (float)state->screen_mouse_x -
                      (float)state->click_info.screen_x +
@@ -961,13 +948,14 @@ static void update_intersection_info(State *state, GraphicsCube *cube,
 
             V2 screen_diff = pixel_to_screen(diff_vec, dims);
 
+            V3 intersection = state->click_info.hover_info.cube_intersection;
+            force_point_to_cube_edge(&intersection);
+
             V3 matched_dir;
             float matched_mag;
-            int matched;
-
-            force_point_to_cube_edge(&intersection);
-            matched = matching_direction(basis_info, intersection, screen_diff,
-                                         &matched_mag, &matched_dir);
+            int matched =
+                matching_direction(basis_info, intersection, screen_diff,
+                                   &matched_mag, &matched_dir);
 
             if (matched) {
                 V3 face_center = point_to_face_center(intersection);
@@ -1040,23 +1028,21 @@ static void create_texture_from_cube(Application const *app, Color **p_texture,
     uint32_t height = 4 * side_count;
     uint32_t rect_size = stride * height;
 
+    Color *texture = ARENA_PUSH_N(Color, app->arena, rect_size * item_size);
+    if (texture == NULL) {
+        return;
+    }
+
+    for (uint32_t i = 0; i < rect_size; ++i) {
+        texture[i] = (Color){.r = 0xFF, .g = 0x00, .b = 0xFF};
+    }
+
     Spacing spacing = {
         .item_size = item_size,
         .hgap = 0,
         .vgap = 0,
         .trailing_v = 0,
     };
-
-    Color clear_color = {.r = 0xFF, .g = 0x00, .b = 0xFF};
-    Color *texture = ARENA_PUSH_N(Color, app->arena, rect_size * item_size);
-
-    if (texture == NULL) {
-        return;
-    }
-
-    for (uint32_t i = 0; i < rect_size; ++i) {
-        texture[i] = clear_color;
-    }
 
     generic_write_cube(app->cube.cube, (void *)texture, spacing,
                        write_color_for_face);
@@ -1141,11 +1127,6 @@ static int render_cube(Application const *app, V2 dim_vec) {
     };
     V3 y_dir = polar_to_rectangular(y_dir_polar);
     V3 x_dir = cross(unit_center, y_dir);
-
-    Color *texture = NULL;
-    uint32_t tex_width, tex_height;
-
-    GLuint uniform_index;
 
     V3 mouse_3 = {
         .x = app->state.mouse.x,
@@ -1241,6 +1222,9 @@ static int render_cube(Application const *app, V2 dim_vec) {
         }
     }
 
+    Color *texture = NULL;
+    uint32_t tex_width, tex_height;
+
     create_texture_from_cube(app, &texture, &tex_width, &tex_height);
     if (texture == NULL) {
         fprintf(stderr, "Couldn't allocate space for cube texture\n");
@@ -1250,7 +1234,8 @@ static int render_cube(Application const *app, V2 dim_vec) {
     glBindVertexArray(cube->vao);
 
     glActiveTexture(GL_TEXTURE0);
-    uniform_index = glGetUniformLocation(gl_program, "cube_texture");
+
+    GLuint uniform_index = glGetUniformLocation(gl_program, "cube_texture");
     glUniform1i(uniform_index, 0);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -1312,18 +1297,18 @@ vertex_alloc_fail:
 }
 
 static void render(Application const *app) {
-    // TODO: Get the screen width and height and use a "pixels to meters" type
-    // thing like from Handmade Hero?
-
-    V2 dim_vec = {
-        .x = (float)app->state.window_width,
-        .y = (float)app->state.window_height,
-    };
-
     glViewport(0, 0, app->state.window_width, app->state.window_height);
 
     if (arena_begin(app->arena) == 0) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // TODO: Get the screen width and height and use a "pixels to meters"
+        // type thing like from Handmade Hero?
+
+        V2 dim_vec = {
+            .x = (float)app->state.window_width,
+            .y = (float)app->state.window_height,
+        };
 
         // TODO: maybe write some wrappers for this?
         if (render_cube(app, dim_vec) != 0) {
@@ -1492,13 +1477,14 @@ static void define_split_vertices(Arena *arena, uint32_t cube_size,
 #endif
 }
 
+static uint32_t const EXP_SQUARE_VERTICES =
+    VERTEX_COUNT_TO_TRIANGLE_COUNT(SQUARE_CORNERS);
+
 static void define_split_indices(Arena *arena, uint32_t cube_size,
                                  GraphicsCube *cube) {
-    uint32_t two_cs_m_one = 2 * cube_size - 1;
-    uint32_t expanded_square_vertices =
-        VERTEX_COUNT_TO_TRIANGLE_COUNT(SQUARE_CORNERS);
+    uint32_t two_size_min_one = 2 * cube_size - 1;
     uint32_t index_count_per_side =
-        expanded_square_vertices * (two_cs_m_one * two_cs_m_one);
+        EXP_SQUARE_VERTICES * (two_size_min_one * two_size_min_one);
     uint32_t split_index_count = CUBE_FACES * index_count_per_side;
     uint32_t index_stride = 2 * cube_size;
 
@@ -1510,8 +1496,8 @@ static void define_split_indices(Arena *arena, uint32_t cube_size,
         uint32_t index_base = face_id * (index_stride * index_stride);
         int *cur_loc = cube->indices + (face_id * index_count_per_side);
 
-        for (uint32_t col = 0; col < two_cs_m_one; ++col) {
-            for (uint32_t row = 0; row < two_cs_m_one; ++row) {
+        for (uint32_t col = 0; col < two_size_min_one; ++col) {
+            for (uint32_t row = 0; row < two_size_min_one; ++row) {
 
                 int face_square_indices[4] = {
                     index_base,                    //
@@ -1522,8 +1508,8 @@ static void define_split_indices(Arena *arena, uint32_t cube_size,
 
                 expand_vertices_to_triangles(face_square_indices, 4, 4,
                                              cur_loc);
-                cur_loc += expanded_square_vertices;
-                count += expanded_square_vertices;
+                cur_loc += EXP_SQUARE_VERTICES;
+                count += EXP_SQUARE_VERTICES;
                 index_base += 1;
             }
             index_base += 1;
@@ -1552,49 +1538,46 @@ static void define_split_indices(Arena *arena, uint32_t cube_size,
 
 int graphics_main(void) {
     int ret = 0;
-    int sdl_init_ret, gl_init_ret;
     uint32_t cube_size = 5;
 
-    Arena *arena = NULL;
-    Cube *cube_state;
-    SDL_Window *window = NULL;
-    SDL_GLContext *gl_context = NULL;
-    GLuint gl_program = 0;
-    GraphicsCube cube = {0};
-    Application app;
-
-    arena = alloc_arena();
+    Arena *arena = alloc_arena();
     if (arena == NULL) {
         fprintf(stderr, "Unable to allocate arena\n");
         goto arena_alloc_fail;
     }
 
-    if ((sdl_init_ret = sdl_init(&window)) != 0) {
+    SDL_Window *window;
+
+    int sdl_init_ret = sdl_init(&window);
+    if (sdl_init_ret != 0) {
         fprintf(stderr, "Unable to init application with code %d\n",
                 sdl_init_ret);
         goto sdl_init_fail;
     }
 
-    if ((gl_init_ret = gl_init(window, &gl_context, &gl_program, &cube)) != 0) {
+    SDL_GLContext *gl_context = NULL;
+    GraphicsCube g_cube = {0};
+    GLuint gl_program;
+
+    int gl_init_ret = gl_init(window, &gl_context, &gl_program, &g_cube);
+    if (gl_init_ret != 0) {
         fprintf(stderr, "Unable to init GLEW and shaders with code %d\n",
                 gl_init_ret);
         goto gl_init_fail;
     }
 
-    if ((cube_state = new_cube(cube_size)) == NULL) {
+    if ((g_cube.cube = new_cube(cube_size)) == NULL) {
         fprintf(stderr, "Could not allocate cube\n");
         goto cube_alloc_fail;
     }
 
-    cube.cube = cube_state;
-
-    app = (Application){
+    Application app = {
         .window = window,
         .last_ticks = SDL_GetTicks(),
 
         .gl_context = gl_context,
         .gl_program = gl_program,
-        .cube = cube,
+        .cube = g_cube,
 
         .arena = arena,
         .state = get_initial_state(),
