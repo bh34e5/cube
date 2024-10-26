@@ -96,7 +96,7 @@ void expand_vertices_to_triangles(int const *indices, uint32_t index_count,
     }
 }
 
-inline V3 add(V3 lhs, V3 rhs) {
+inline V3 add3(V3 lhs, V3 rhs) {
     return (V3){
         .x = lhs.x + rhs.x,
         .y = lhs.y + rhs.y,
@@ -104,11 +104,25 @@ inline V3 add(V3 lhs, V3 rhs) {
     };
 }
 
-inline V3 scale(V3 v, float c) {
+inline V3 scale3(V3 v, float c) {
     return (V3){
         .x = v.x * c,
         .y = v.y * c,
         .z = v.z * c,
+    };
+}
+
+inline V2 add2(V2 lhs, V2 rhs) {
+    return (V2){
+        .x = lhs.x + rhs.x,
+        .y = lhs.y + rhs.y,
+    };
+}
+
+inline V2 scale2(V2 v, float c) {
+    return (V2){
+        .x = v.x * c,
+        .y = v.y * c,
     };
 }
 
@@ -159,10 +173,10 @@ inline V3 polar_to_rectangular(V3 v) {
 
 V3 decompose(V3 target, V3 dir, V3 *perp) {
     float dotted = dot(target, dir);
-    V3 res = scale(dir, dotted);
+    V3 res = scale3(dir, dotted);
 
     if (perp != NULL) {
-        V3 diff = add(target, scale(res, -1.0f));
+        V3 diff = add3(target, scale3(res, -1.0f));
         *perp = diff;
     }
 
@@ -178,9 +192,9 @@ V3 complete_decomp(V3 target, V3 x, V3 y, V3 z) {
 }
 
 V3 compose(V3 target, V3 x_dir, V3 y_dir, V3 z_dir) {
-    V3 x_comp = scale(x_dir, target.x);
-    V3 y_comp = scale(y_dir, target.y);
-    V3 z_comp = scale(z_dir, target.z);
+    V3 x_comp = scale3(x_dir, target.x);
+    V3 y_comp = scale3(y_dir, target.y);
+    V3 z_comp = scale3(z_dir, target.z);
 
-    return add(add(x_comp, y_comp), z_comp);
+    return add3(add3(x_comp, y_comp), z_comp);
 }

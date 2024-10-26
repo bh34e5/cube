@@ -51,8 +51,11 @@ FaceColor get_cube_face(V3 point);
 void expand_vertices_to_triangles(int const *indices, uint32_t index_count,
                                   uint32_t indices_per_face, int *triangles);
 
-V3 add(V3 lhs, V3 rhs);
-V3 scale(V3 v, float c);
+V3 add3(V3 lhs, V3 rhs);
+V3 scale3(V3 v, float c);
+
+V2 add2(V2 lhs, V2 rhs);
+V2 scale2(V2 v, float c);
 
 V3 v_lerp(V3 l, float factor, V3 r);
 

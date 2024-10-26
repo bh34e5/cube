@@ -556,8 +556,8 @@ static int inside_triangle(V3 point, V3 ab, V3 ac) {
     decompose(ab, as_unit(ac), &bc_perp);
     decompose(ac, as_unit(ab), &cb_perp);
 
-    ab_perp = scale(bc_perp, 1.0f / dot(bc_perp, ab));
-    ac_perp = scale(cb_perp, 1.0f / dot(cb_perp, ac));
+    ab_perp = scale3(bc_perp, 1.0f / dot(bc_perp, ab));
+    ac_perp = scale3(cb_perp, 1.0f / dot(cb_perp, ac));
 
     x = dot(point, ab_perp);
     y = dot(point, ac_perp);
@@ -574,17 +574,17 @@ static int check_intersection(V3 camera, V3 mouse_direction, V3 a, V3 b, V3 c,
                               float *res_t) {
     int intersects = 0;
 
-    V3 minus_a = scale(a, -1.0f);
-    V3 ab = add(b, minus_a);
-    V3 ac = add(c, minus_a);
+    V3 minus_a = scale3(a, -1.0f);
+    V3 ab = add3(b, minus_a);
+    V3 ac = add3(c, minus_a);
 
     V3 perp = cross(ab, ac);
 
     float t = (dot(a, perp) - dot(camera, perp)) / dot(mouse_direction, perp);
 
-    V3 point = add(camera, scale(mouse_direction, t));
+    V3 point = add3(camera, scale3(mouse_direction, t));
 
-    if (inside_triangle(add(point, minus_a), ab, ac)) {
+    if (inside_triangle(add3(point, minus_a), ab, ac)) {
         *res_t = t;
         intersects = 1;
 
@@ -621,7 +621,7 @@ static V3 const UNIT_Z_AXIS = {.x = 0.0f, .y = 0.0f, .z = 1.0f};
 
 static BasisInformation get_basis_information(V3 camera_pos) {
     V3 minus_center = polar_to_rectangular(camera_pos);
-    V3 cube_center = scale(minus_center, -1.0);
+    V3 cube_center = scale3(minus_center, -1.0);
     V3 unit_center = as_unit(cube_center);
     V3 y_dir_polar = {
         .rho = 1,
@@ -633,9 +633,9 @@ static BasisInformation get_basis_information(V3 camera_pos) {
     V3 y_dir = polar_to_rectangular(y_dir_polar);
     V3 x_dir = cross(unit_center, y_dir);
 
-    V3 x_loc = add(UNIT_X_AXIS, cube_center);
-    V3 y_loc = add(UNIT_Y_AXIS, cube_center);
-    V3 z_loc = add(UNIT_Z_AXIS, cube_center);
+    V3 x_loc = add3(UNIT_X_AXIS, cube_center);
+    V3 y_loc = add3(UNIT_Y_AXIS, cube_center);
+    V3 z_loc = add3(UNIT_Z_AXIS, cube_center);
 
     return (BasisInformation){
         .x_dir = x_dir,
@@ -794,7 +794,7 @@ static int find_intersection(V3 camera_pos, V3 mouse_3,
                 closest_t = res_t;
                 hover_info.hover_face = (FaceColor)cube->info[ind0].face_num;
                 hover_info.cube_intersection =
-                    add(minus_center, scale(mouse_in_world, closest_t));
+                    add3(minus_center, scale3(mouse_in_world, closest_t));
             }
         }
     }
@@ -973,7 +973,7 @@ static void update_intersection_info(State *state, GraphicsCube *cube,
                 V3 face_center = point_to_face_center(intersection);
                 // FaceColor intersected_face = get_cube_face(face_center);
 
-                V3 matched_dir_mult = scale(matched_dir, matched_mag);
+                V3 matched_dir_mult = scale3(matched_dir, matched_mag);
                 V3 rotation_axis = cross(face_center, matched_dir_mult);
                 FaceColor rotation_face = get_cube_face(rotation_axis);
 
@@ -1128,7 +1128,7 @@ static int render_cube(Application const *app, V2 dim_vec) {
     };
 
     V3 minus_center = polar_to_rectangular(camera_pos);
-    V3 cube_center = scale(minus_center, -1.0);
+    V3 cube_center = scale3(minus_center, -1.0);
     V3 unit_center = as_unit(cube_center);
     float screen_cube_ratio = CAMERA_SCREEN_DIST / camera_pos.rho;
 
@@ -1195,18 +1195,18 @@ static int render_cube(Application const *app, V2 dim_vec) {
                 continue;
             }
 
-            V3 minus_a0 = scale(cube->info[ind00].position, -1.0f);
-            V3 minus_a1 = scale(cube->info[ind10].position, -1.0f);
+            V3 minus_a0 = scale3(cube->info[ind00].position, -1.0f);
+            V3 minus_a1 = scale3(cube->info[ind10].position, -1.0f);
 
             int is_intersecting_triangle0 = inside_triangle(
-                add(app->state.hover_info.cube_intersection, minus_a0),
-                add(cube->info[ind01].position, minus_a0),
-                add(cube->info[ind02].position, minus_a0));
+                add3(app->state.hover_info.cube_intersection, minus_a0),
+                add3(cube->info[ind01].position, minus_a0),
+                add3(cube->info[ind02].position, minus_a0));
 
             int is_intersecting_triangle1 = inside_triangle(
-                add(app->state.hover_info.cube_intersection, minus_a1),
-                add(cube->info[ind11].position, minus_a1),
-                add(cube->info[ind12].position, minus_a1));
+                add3(app->state.hover_info.cube_intersection, minus_a1),
+                add3(cube->info[ind11].position, minus_a1),
+                add3(cube->info[ind12].position, minus_a1));
 
             if (is_intersecting_triangle0 || is_intersecting_triangle1) {
                 V3 a0 = cube->info[ind00].position;
