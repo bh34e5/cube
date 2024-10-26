@@ -488,3 +488,21 @@ static uint32_t get_face_in_dir(Cube *cube, int dir, int *from_dir) {
 
 #undef SET_FROM_IF_PASSED
 }
+
+void checkerboard(Cube *cube) {
+    uint32_t sides = cube->sides;
+    int orientation = cube->orientation;
+    FaceColor facing_side = cube->facing_side;
+
+    for (FaceColor fc = 0; fc < FC_Count / 2; ++fc) {
+        set_facing_side(cube, fc);
+
+        for (uint32_t depth = 0; depth < sides; depth += 2) {
+            rotate_front(cube, depth, 0);
+            rotate_front(cube, depth, 0);
+        }
+    }
+
+    cube->orientation = orientation;
+    cube->facing_side = facing_side;
+}

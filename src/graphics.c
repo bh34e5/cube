@@ -519,6 +519,10 @@ static StateUpdate get_inputs(Application const *app) {
             } else if (keys[SDL_SCANCODE_RIGHT] == 1) {
                 s_update.camera_theta_dir = -1;
             }
+
+            if (keys[SDL_SCANCODE_C] == 1) {
+                s_update.checkerboard = 1;
+            }
         } break;
         }
     }
@@ -705,6 +709,10 @@ static void update_from_user_input(State *state, Cube *cube,
 
     if (s_update.rotate_front) {
         rotate_front(cube, state->rotate_depth, 1);
+    }
+
+    if (s_update.checkerboard) {
+        checkerboard(cube);
     }
 
     if (s_update.set_face) {

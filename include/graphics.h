@@ -76,6 +76,7 @@ typedef struct {
         uint32_t mouse_moved : 1;
         uint32_t window_resized : 1;
         uint32_t toggle_mouse_click : 1;
+        uint32_t checkerboard : 1;
     };
 
     int camera_rho_dir;

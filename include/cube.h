@@ -22,6 +22,7 @@ void free_cube(Cube *cube);
 void rotate_front(Cube *cube, uint32_t depth, int clockwise);
 void set_facing_side(Cube *cube, FaceColor facing_side);
 void set_orientation(Cube *cube, int orientation);
+void checkerboard(Cube *cube);
 
 typedef void (*WriterFunction)(void *, FaceColor);
 typedef struct {
