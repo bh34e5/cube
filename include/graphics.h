@@ -98,6 +98,7 @@ typedef struct {
 
 typedef struct {
     V3 position;
+    V3 texture;
     float face_num;
 } VertexInformation;
 

@@ -14,7 +14,7 @@ struct cube {
     FaceColor *squares;
 };
 
-static FaceColor opposite_faces[FC_Count] = {
+FaceColor opposite_faces[FC_Count] = {
     [FC_White] = FC_Yellow, //
     [FC_Red] = FC_Orange,   //
     [FC_Blue] = FC_Green,   //
@@ -24,7 +24,8 @@ static FaceColor opposite_faces[FC_Count] = {
 };
 
 static void initialize_cube(Cube *cube);
-static uint32_t get_face_in_dir(Cube *cube, int dir, int *from_dir);
+static FaceColor get_face_in_dir(FaceColor facing_color, int dir,
+                                 int *from_dir);
 static inline FaceColor get_at_rc(FaceColor *colors, uint32_t sides,
                                   uint32_t row, uint32_t col, int dir);
 static inline void set_at_rc(FaceColor *colors, uint32_t sides, uint32_t row,
@@ -121,10 +122,11 @@ void rotate_front(Cube *cube, uint32_t depth, int clockwise) {
     int sou_back_dir;
     int wes_back_dir;
 
-    FaceColor nor_col = get_face_in_dir(cube, 0, &nor_back_dir);
-    FaceColor eas_col = get_face_in_dir(cube, 1, &eas_back_dir);
-    FaceColor sou_col = get_face_in_dir(cube, 2, &sou_back_dir);
-    FaceColor wes_col = get_face_in_dir(cube, 3, &wes_back_dir);
+    FaceColor cur_col = cube->facing_side;
+    FaceColor nor_col = get_face_in_dir(cur_col, 0, &nor_back_dir);
+    FaceColor eas_col = get_face_in_dir(cur_col, 1, &eas_back_dir);
+    FaceColor sou_col = get_face_in_dir(cur_col, 2, &sou_back_dir);
+    FaceColor wes_col = get_face_in_dir(cur_col, 3, &wes_back_dir);
 
     FaceColor *nor = cube->squares + (colors_per_side * nor_col);
     FaceColor *eas = cube->squares + (colors_per_side * eas_col);
@@ -360,7 +362,8 @@ static void initialize_cube(Cube *cube) {
     }
 }
 
-static uint32_t get_face_in_dir(Cube *cube, int dir, int *from_dir) {
+static FaceColor get_face_in_dir(FaceColor facing_side, int dir,
+                                 int *from_dir) {
 #define SET_FROM_IF_PASSED(d)                                                  \
     do {                                                                       \
         if (from_dir != NULL) {                                                \
@@ -373,7 +376,7 @@ static uint32_t get_face_in_dir(Cube *cube, int dir, int *from_dir) {
            "%d\n",
            dir);
 
-    switch (cube->facing_side) {
+    switch (facing_side) {
     case FC_White: {
         switch (dir) {
         case 0:

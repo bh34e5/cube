@@ -1,5 +1,6 @@
 #include "graphics.h"
 
+#include <assert.h>
 #include <stdio.h>
 
 #include "common.h"
@@ -800,7 +801,8 @@ static int find_intersection(V3 camera_pos, V3 mouse_3,
 }
 
 static int matching_direction(BasisInformation basis_info, V3 intersection,
-                              V2 screen_diff, float *r_mag, V3 *res) {
+                              V2 screen_diff, float *r_mag, float *r_dir,
+                              V3 *res) {
     static float const thresh = 1e-3f;
 
     float mag = sqrtf(dot2(screen_diff, screen_diff));
@@ -809,10 +811,7 @@ static int matching_direction(BasisInformation basis_info, V3 intersection,
     }
 
     float inv_mag = 1.0f / mag;
-    V2 unit_test = {
-        .x = screen_diff.x * inv_mag,
-        .y = screen_diff.y * inv_mag,
-    };
+    V2 unit_test = scale2(screen_diff, inv_mag);
 
     V2 t_one;
     V2 t_two;
@@ -839,27 +838,30 @@ static int matching_direction(BasisInformation basis_info, V3 intersection,
         r_one = UNIT_X_AXIS;
         r_two = UNIT_Y_AXIS;
     } else {
-        printf("The intersection was not on the cube somehow...\n");
+        if (print_a_thing) {
+            printf("The intersection was not on the cube somehow...\n");
+        }
         return 0;
     }
 
-    float match_one = dot2(t_one, unit_test) / sqrtf(dot2(t_one, t_one));
-    float match_two = dot2(t_two, unit_test) / sqrtf(dot2(t_two, t_two));
+    float inv_t_mag_one = sqrtf(dot2(t_one, t_one));
+    float inv_t_mag_two = sqrtf(dot2(t_two, t_two));
 
-    float r_match;
+    float match_one = dot2(t_one, unit_test) * inv_t_mag_one;
+    float match_two = dot2(t_two, unit_test) * inv_t_mag_two;
 
     if (fabsf(match_one) > fabsf(match_two)) {
-        *res = r_one;
-        r_match = match_one;
-    } else {
-        *res = r_two;
-        r_match = match_two;
-    }
+        V2 proj = scale2(t_one, dot2(screen_diff, t_one) * inv_t_mag_one);
 
-    if (r_match > 0.0f) {
-        *r_mag = +1.0f;
+        *res = r_one;
+        *r_mag = sqrtf(dot2(proj, proj));
+        *r_dir = (match_one > 0.0f) ? +1.0f : -1.0f;
     } else {
-        *r_mag = -1.0f;
+        V2 proj = scale2(t_two, dot2(screen_diff, t_two) * inv_t_mag_two);
+
+        *res = r_two;
+        *r_mag = sqrtf(dot2(proj, proj));
+        *r_dir = (match_two > 0.0f) ? +1.0f : -1.0f;
     }
 
     return 1;
@@ -896,7 +898,367 @@ static int get_rotation_depth(FaceColor rotation_face, V3 intersection,
     return (int)(target_coord >= cube_size ? cube_size - 1 : target_coord);
 }
 
+static int get_cube_drag_direction(BasisInformation basis_info, V3 intersection,
+                                   V2 screen_diff, uint32_t cube_sides,
+                                   FaceColor *p_rotation_face,
+                                   int *p_rotation_depth,
+                                   float *p_rotation_mag) {
+    float matched_sign;
+    V3 matched_dir;
+
+    int matched =
+        matching_direction(basis_info, intersection, screen_diff,
+                           p_rotation_mag, &matched_sign, &matched_dir);
+
+    if (matched) {
+        V3 face_center = point_to_face_center(intersection);
+        V3 matched_dir_mult = scale3(matched_dir, matched_sign);
+
+        V3 rotation_axis = cross(face_center, matched_dir_mult);
+
+        FaceColor rotation_face = get_cube_face(rotation_axis);
+        int rotation_depth =
+            get_rotation_depth(rotation_face, intersection, cube_sides);
+
+        *p_rotation_face = rotation_face;
+        *p_rotation_depth = rotation_depth;
+    }
+
+    if (print_a_thing) {
+        printf("screen_diff = {.x = %f, .y = %f}\n"
+               "matched = %d, mag = %f, dir = {.x = %f, .y = %f, .z = %f}\n",
+               screen_diff.x, screen_diff.y, matched, matched_sign,
+               matched_dir.x, matched_dir.y, matched_dir.z);
+    }
+
+    return matched;
+}
+
+static FaceColor get_face_in_dir(FaceColor facing_side, int dir,
+                                 int *from_dir) {
+#define SET_FROM_IF_PASSED(d)                                                  \
+    do {                                                                       \
+        if (from_dir != NULL) {                                                \
+            *from_dir = (d);                                                   \
+        }                                                                      \
+    } while (0)
+
+    DCHECK(0 <= dir && dir < 4,
+           "Invalid direction in getter. Expected 0 <= direction < 4, but got "
+           "%d\n",
+           dir);
+
+    switch (facing_side) {
+    case FC_White: {
+        switch (dir) {
+        case 0:
+            SET_FROM_IF_PASSED(2);
+            return FC_Green;
+        case 1:
+            SET_FROM_IF_PASSED(1);
+            return FC_Orange;
+        case 2:
+            SET_FROM_IF_PASSED(1);
+            return FC_Blue;
+        case 3:
+            SET_FROM_IF_PASSED(2);
+            return FC_Red;
+        default:
+            assert(!"Unreachable");
+        }
+    } break;
+    case FC_Red: {
+        switch (dir) {
+        case 0:
+            SET_FROM_IF_PASSED(2);
+            return FC_Yellow;
+        case 1:
+            SET_FROM_IF_PASSED(1);
+            return FC_Green;
+        case 2:
+            SET_FROM_IF_PASSED(1);
+            return FC_White;
+        case 3:
+            SET_FROM_IF_PASSED(2);
+            return FC_Blue;
+        default:
+            assert(!"Unreachable");
+        }
+    } break;
+    case FC_Blue: {
+        switch (dir) {
+        case 0:
+            SET_FROM_IF_PASSED(2);
+            return FC_Orange;
+        case 1:
+            SET_FROM_IF_PASSED(1);
+            return FC_Yellow;
+        case 2:
+            SET_FROM_IF_PASSED(1);
+            return FC_Red;
+        case 3:
+            SET_FROM_IF_PASSED(2);
+            return FC_White;
+        default:
+            assert(!"Unreachable");
+        }
+    } break;
+    case FC_Orange: {
+        switch (dir) {
+        case 0:
+            SET_FROM_IF_PASSED(3);
+            return FC_Green;
+        case 1:
+            SET_FROM_IF_PASSED(0);
+            return FC_Yellow;
+        case 2:
+            SET_FROM_IF_PASSED(0);
+            return FC_Blue;
+        case 3:
+            SET_FROM_IF_PASSED(3);
+            return FC_White;
+        default:
+            assert(!"Unreachable");
+        }
+    } break;
+    case FC_Green: {
+        switch (dir) {
+        case 0:
+            SET_FROM_IF_PASSED(3);
+            return FC_Yellow;
+        case 1:
+            SET_FROM_IF_PASSED(0);
+            return FC_Orange;
+        case 2:
+            SET_FROM_IF_PASSED(0);
+            return FC_White;
+        case 3:
+            SET_FROM_IF_PASSED(3);
+            return FC_Red;
+        default:
+            assert(!"Unreachable");
+        }
+    } break;
+    case FC_Yellow: {
+        switch (dir) {
+        case 0:
+            SET_FROM_IF_PASSED(3);
+            return FC_Orange;
+        case 1:
+            SET_FROM_IF_PASSED(0);
+            return FC_Green;
+        case 2:
+            SET_FROM_IF_PASSED(0);
+            return FC_Red;
+        case 3:
+            SET_FROM_IF_PASSED(3);
+            return FC_Blue;
+        default:
+            assert(!"Unreachable");
+        }
+    } break;
+    default:
+        assert(!"Unreachable");
+    }
+
+#undef SET_FROM_IF_PASSED
+}
+
+VertexInformation *get_vertex(GraphicsCube *cube, FaceColor face,
+                              int orientation, int row, int col, int vert) {
+    DCHECK(0 <= orientation && orientation < 4, "Invalid face direction");
+    DCHECK(0 <= vert && vert < 4, "Invalid vertex number");
+
+    int back_direction;
+    FaceColor face_in_dir = get_face_in_dir(face, orientation, &back_direction);
+
+    uint32_t sides = get_side_count(cube->cube);
+    uint32_t base_offset = face_in_dir * (2 * sides) * (2 * sides);
+
+    VertexInformation *base = cube->info + base_offset;
+
+    VertexInformation *vertex;
+    switch (back_direction) {
+    case 0: {
+        vertex = base + (row * 4 * sides) + col * 2;
+        switch (vert) {
+        case 0:
+            return vertex;
+        case 1:
+            return vertex + 1;
+        case 2:
+            return vertex + 2 * sides + 1;
+        case 3:
+            return vertex + 2 * sides;
+        default:
+            assert(!"Unreachable");
+        }
+    } break;
+    case 1: {
+        vertex = base + (col * 4 * sides) + (sides - 1 - row) * 2;
+        switch (vert) {
+        case 0:
+            return vertex + 1;
+        case 1:
+            return vertex + 2 * sides + 1;
+        case 2:
+            return vertex + 2 * sides;
+        case 3:
+            return vertex;
+        default:
+            assert(!"Unreachable");
+        }
+    } break;
+    case 2: {
+        vertex = base + ((sides - 1 - row) * 4 * sides) + (sides - 1 - col) * 2;
+        switch (vert) {
+        case 0:
+            return vertex + 2 * sides + 1;
+        case 1:
+            return vertex + 2 * sides;
+        case 2:
+            return vertex;
+        case 3:
+            return vertex + 1;
+        default:
+            assert(!"Unreachable");
+        }
+    } break;
+    case 3: {
+        vertex = base + ((sides - 1 - col) * 4 * sides) + row * 2;
+        switch (vert) {
+        case 0:
+            return vertex + 2 * sides;
+        case 1:
+            return vertex;
+        case 2:
+            return vertex + 1;
+        case 3:
+            return vertex + 2 * sides + 1;
+        default:
+            assert(!"Unreachable");
+        }
+    } break;
+    default:
+        assert(!"Unreachable");
+    }
+}
+
+#define ROTATE_MSG "Can only rotate around one of the standard unit axes"
+
+static V3 rotate_around(V3 initial, V3 axis, float angle) {
+    static float const epsilon = 1e-3f;
+
+    float cos_theta = cosf(angle);
+    float sin_theta = sinf(angle);
+
+    if (fabsf(axis.x - 1.0f) < epsilon) {
+        DCHECK(axis.y == 0.0f && axis.z == 0.0f, ROTATE_MSG);
+        return (V3){
+            .x = initial.x,
+            .y = cos_theta * initial.y - sin_theta * initial.z,
+            .z = sin_theta * initial.y + cos_theta * initial.z,
+        };
+    } else if (fabsf(axis.x + 1.0f) < epsilon) {
+        DCHECK(axis.y == 0.0f && axis.z == 0.0f, ROTATE_MSG);
+        return (V3){
+            .x = initial.x,
+            .y = cos_theta * initial.y + sin_theta * initial.z,
+            .z = -sin_theta * initial.y + cos_theta * initial.z,
+        };
+    } else if (fabsf(axis.y - 1.0f) < epsilon) {
+        DCHECK(axis.x == 0.0f && axis.z == 0.0f, ROTATE_MSG);
+        return (V3){
+            .x = sin_theta * initial.z + cos_theta * initial.x,
+            .y = initial.y,
+            .z = cos_theta * initial.z - sin_theta * initial.x,
+        };
+    } else if (fabsf(axis.y + 1.0f) < epsilon) {
+        DCHECK(axis.x == 0.0f && axis.z == 0.0f, ROTATE_MSG);
+        return (V3){
+            .x = -sin_theta * initial.z + cos_theta * initial.x,
+            .y = initial.y,
+            .z = cos_theta * initial.z + sin_theta * initial.x,
+        };
+    } else if (fabsf(axis.z - 1.0f) < epsilon) {
+        DCHECK(axis.x == 0.0f && axis.y == 0.0f, ROTATE_MSG);
+        return (V3){
+            .x = cos_theta * initial.x - sin_theta * initial.y,
+            .y = sin_theta * initial.x + cos_theta * initial.y,
+            .z = initial.z,
+        };
+    } else if (fabsf(axis.z + 1.0f) < epsilon) {
+        DCHECK(axis.x == 0.0f && axis.y == 0.0f, ROTATE_MSG);
+        return (V3){
+            .x = cos_theta * initial.x + sin_theta * initial.y,
+            .y = -sin_theta * initial.x + cos_theta * initial.y,
+            .z = initial.z,
+        };
+    }
+    assert(!"Unreachable");
+}
+
+static V3 get_axis_from_face(FaceColor face) {
+    switch (face) {
+    case FC_White:
+        return UNIT_Z_AXIS;
+    case FC_Red:
+        return UNIT_X_AXIS;
+    case FC_Blue:
+        return UNIT_Y_AXIS;
+    case FC_Orange:
+        return scale3(UNIT_X_AXIS, -1.0f);
+    case FC_Green:
+        return scale3(UNIT_Y_AXIS, -1.0f);
+    case FC_Yellow:
+        return scale3(UNIT_Z_AXIS, -1.0f);
+    default:
+        assert(!"Unreachable");
+    }
+}
+
+static void rotate_vertices(GraphicsCube *cube, FaceColor face, int depth,
+                            float angle) {
+    uint32_t sides = get_side_count(cube->cube);
+    uint32_t side_verts = (2 * sides) * (2 * sides);
+
+    V3 face_axis = get_axis_from_face(face);
+
+    if (depth == 0 || depth == sides - 1) {
+        FaceColor rotation_face = depth == 0 ? face : opposite_faces[face];
+        VertexInformation *base = cube->info + rotation_face * side_verts;
+
+        for (uint32_t i = 0; i < side_verts; ++i) {
+            VertexInformation *vert = base + i;
+
+            vert->position = rotate_around(vert->position, face_axis, angle);
+        }
+    }
+
+    for (int direction = 0; direction < 4; ++direction) {
+        for (uint32_t col = 0; col < sides; ++col) {
+            for (int i = 0; i < 4; ++i) {
+                VertexInformation *vert =
+                    get_vertex(cube, face, direction, depth, col, i);
+
+                V3 new_position =
+                    rotate_around(vert->position, face_axis, angle);
+                vert->position = new_position;
+
+                if (print_a_thing) {
+                    printf("new position[%d][direction = %d, depth = %d, col = "
+                           "%d, angle "
+                           "= %f] = { .x = %f, .y = %f, .z = %f }\n",
+                           i, direction, depth, col, angle, new_position.x,
+                           new_position.y, new_position.z);
+                }
+            }
+        }
+    }
+}
+
 static void update_intersection_info(State *state, GraphicsCube *cube,
+                                     uint32_t mouse_moved,
                                      uint32_t toggled_click) {
     V3 camera_pos = {
         .rho = state->camera.rho,
@@ -905,7 +1267,7 @@ static void update_intersection_info(State *state, GraphicsCube *cube,
     };
 
     BasisInformation basis_info = get_basis_information(camera_pos);
-    int found = 0;
+    int found_intersection = 0;
 
     state->basis_info = basis_info;
 
@@ -917,10 +1279,10 @@ static void update_intersection_info(State *state, GraphicsCube *cube,
         };
 
         HoverInformation hover_info;
-        found = find_intersection(camera_pos, mouse_3, basis_info, cube,
-                                  &hover_info);
+        found_intersection = find_intersection(camera_pos, mouse_3, basis_info,
+                                               cube, &hover_info);
 
-        if (found) {
+        if (found_intersection) {
             state->cube_intersection_found = 1;
             state->hover_info = hover_info;
         } else {
@@ -928,51 +1290,58 @@ static void update_intersection_info(State *state, GraphicsCube *cube,
         }
     }
 
-    if (toggled_click) {
-        if (state->mouse_held) {
-            state->click_info = (ClickInformation){
-                .hover_info = state->hover_info,
-                .screen_x = state->screen_mouse_x,
-                .screen_y = state->screen_mouse_y,
-            };
-        } else {
-            V2 diff_vec = {
-                .x = (float)state->screen_mouse_x -
-                     (float)state->click_info.screen_x +
-                     0.5f * (float)state->window_width,
-                .y = (float)state->screen_mouse_y -
-                     (float)state->click_info.screen_y +
-                     0.5f * (float)state->window_height,
-            };
-            V2 dims = {.x = state->window_width, .y = state->window_height};
+    if (toggled_click && state->mouse_held) {
+        // just clicked
+        state->click_info = (ClickInformation){
+            .hover_info = state->hover_info,
+            .screen_x = state->screen_mouse_x,
+            .screen_y = state->screen_mouse_y,
+        };
+    }
 
-            V2 screen_diff = pixel_to_screen(diff_vec, dims);
+    V2 diff_vec = {
+        .x = (float)state->screen_mouse_x - (float)state->click_info.screen_x +
+             0.5f * (float)state->window_width,
+        .y = (float)state->screen_mouse_y - (float)state->click_info.screen_y +
+             0.5f * (float)state->window_height,
+    };
+    V2 dims = {.x = state->window_width, .y = state->window_height};
 
-            V3 intersection = state->click_info.hover_info.cube_intersection;
-            force_point_to_cube_edge(&intersection);
+    V2 screen_diff = pixel_to_screen(diff_vec, dims);
 
-            V3 matched_dir;
-            float matched_mag;
-            int matched =
-                matching_direction(basis_info, intersection, screen_diff,
-                                   &matched_mag, &matched_dir);
+    V3 intersection = state->click_info.hover_info.cube_intersection;
+    force_point_to_cube_edge(&intersection);
 
-            if (matched) {
-                V3 face_center = point_to_face_center(intersection);
-                // FaceColor intersected_face = get_cube_face(face_center);
+    if (print_a_thing) {
+        printf("diff_vec = {.x = %f, .y = %f}\n", diff_vec.x, diff_vec.y);
+    }
 
-                V3 matched_dir_mult = scale3(matched_dir, matched_mag);
-                V3 rotation_axis = cross(face_center, matched_dir_mult);
-                FaceColor rotation_face = get_cube_face(rotation_axis);
+    FaceColor rotation_face;
+    int rotation_depth;
+    float rotation_magnitude;
 
-                int rotation_depth = get_rotation_depth(
-                    rotation_face, intersection, get_side_count(cube->cube));
-                set_facing_side(cube->cube, rotation_face);
-                rotate_front(cube->cube, rotation_depth, 0);
+    int matched = get_cube_drag_direction(
+        basis_info, intersection, screen_diff, get_side_count(cube->cube),
+        &rotation_face, &rotation_depth, &rotation_magnitude);
+
+    if (matched) {
+        if (toggled_click && !state->mouse_held) {
+            // released the mouse, rotate the cube in the matching direction
+            set_facing_side(cube->cube, rotation_face);
+            rotate_front(cube->cube, rotation_depth, 0);
+
+            // TODO(bhester): on release, snap the cube to where it should be...
+        } else if (state->mouse_held && (1 || mouse_moved)) {
+            // dragging, rotate the vertices of the cube
+            if (fabsf(rotation_magnitude) >= 0.05f) {
+                rotate_vertices(cube, rotation_face, rotation_depth,
+                                rotation_magnitude);
             }
         }
+    }
 
-        if (found) {
+    if (toggled_click) {
+        if (found_intersection) {
             state->mouse_clicked_cube = 1;
         } else {
             state->mouse_clicked_cube = 0;
@@ -984,7 +1353,8 @@ static void update(Application *app, StateUpdate s_update) {
     State *state = &app->state;
 
     update_from_user_input(state, app->cube.cube, s_update);
-    update_intersection_info(state, &app->cube, s_update.toggle_mouse_click);
+    update_intersection_info(state, &app->cube, s_update.mouse_moved,
+                             s_update.toggle_mouse_click);
 
     if (print_a_thing) {
         printf(
@@ -1261,10 +1631,14 @@ static int render_cube(Application const *app, V2 dim_vec) {
         (GLvoid const *)offsetof(VertexInformation, position));
     glEnableVertexAttribArray(0);
 
-    glVertexAttribPointer(
-        1, 1, GL_FLOAT, GL_FALSE, sizeof(*cube->info),
-        (GLvoid const *)offsetof(VertexInformation, face_num));
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(*cube->info),
+                          (GLvoid const *)offsetof(VertexInformation, texture));
     glEnableVertexAttribArray(1);
+
+    glVertexAttribPointer(
+        2, 1, GL_FLOAT, GL_FALSE, sizeof(*cube->info),
+        (GLvoid const *)offsetof(VertexInformation, face_num));
+    glEnableVertexAttribArray(2);
 
     // fill vertex information buffer
     glBindBuffer(GL_ARRAY_BUFFER, cube->vbo[1]);
@@ -1273,9 +1647,9 @@ static int render_cube(Application const *app, V2 dim_vec) {
 
     // specify location of data within buffer
     glVertexAttribPointer(
-        2, 1, GL_FLOAT, GL_FALSE, sizeof(*attributes),
+        3, 1, GL_FLOAT, GL_FALSE, sizeof(*attributes),
         (GLvoid const *)offsetof(VertexAttributes, intersecting));
-    glEnableVertexAttribArray(2);
+    glEnableVertexAttribArray(3);
 
     // fill index buffer
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cube->ebo);
@@ -1324,6 +1698,13 @@ static void render(Application const *app) {
 
 static void define_split_vertices(Arena *arena, uint32_t cube_size,
                                   GraphicsCube *cube) {
+#define VERTEX(pos)                                                            \
+    (VertexInformation){                                                       \
+        .position = (pos),                                                     \
+        .texture = (pos),                                                      \
+        .face_num = (float)face_id,                                            \
+    }
+
     uint32_t split_vertex_count =
         CUBE_FACES * (2 * cube_size) * (2 * cube_size);
 
@@ -1343,31 +1724,19 @@ static void define_split_vertices(Arena *arena, uint32_t cube_size,
         V3 target_two = cube_vertices[cube_indices[3]];
 
         // bottom left
-        cube->info[cur_index++] = (VertexInformation){
-            .position = start,
-            .face_num = (float)face_id,
-        };
+        cube->info[cur_index++] = VERTEX(start);
 
         // left side
         for (uint32_t x_i = 1; x_i < cube_size; ++x_i) {
-            // two of them to allow for rotation
-            cube->info[cur_index++] = (VertexInformation){
-                .position = v_lerp(start, x_i * factor, target_one),
-                .face_num = (float)face_id,
-            };
+            V3 position = v_lerp(start, x_i * factor, target_one);
 
-            // (the second)
-            cube->info[cur_index++] = (VertexInformation){
-                .position = v_lerp(start, x_i * factor, target_one),
-                .face_num = (float)face_id,
-            };
+            // two of them to allow for rotation
+            cube->info[cur_index++] = VERTEX(position);
+            cube->info[cur_index++] = VERTEX(position);
         }
 
         // top left
-        cube->info[cur_index++] = (VertexInformation){
-            .position = target_one,
-            .face_num = (float)face_id,
-        };
+        cube->info[cur_index++] = VERTEX(target_one);
 
         for (uint32_t y_i = 1; y_i < cube_size; ++y_i) {
             // two of them to allow for rotation
@@ -1375,31 +1744,18 @@ static void define_split_vertices(Arena *arena, uint32_t cube_size,
                 V3 inner_start = v_lerp(start, y_i * factor, target_two);
                 V3 inner_target_one = v_lerp(target_one, y_i * factor, final);
 
-                cube->info[cur_index++] = (VertexInformation){
-                    .position = inner_start,
-                    .face_num = (float)face_id,
-                };
+                cube->info[cur_index++] = VERTEX(inner_start);
 
                 for (uint32_t x_i = 1; x_i < cube_size; ++x_i) {
-                    // two of them to allow for rotation
-                    cube->info[cur_index++] = (VertexInformation){
-                        .position =
-                            v_lerp(inner_start, x_i * factor, inner_target_one),
-                        .face_num = (float)face_id,
-                    };
+                    V3 position =
+                        v_lerp(inner_start, x_i * factor, inner_target_one);
 
-                    // (the second)
-                    cube->info[cur_index++] = (VertexInformation){
-                        .position =
-                            v_lerp(inner_start, x_i * factor, inner_target_one),
-                        .face_num = (float)face_id,
-                    };
+                    // two of them to allow for rotation
+                    cube->info[cur_index++] = VERTEX(position);
+                    cube->info[cur_index++] = VERTEX(position);
                 }
 
-                cube->info[cur_index++] = (VertexInformation){
-                    .position = inner_target_one,
-                    .face_num = (float)face_id,
-                };
+                cube->info[cur_index++] = VERTEX(inner_target_one);
             }
 
             // (the second)
@@ -1407,60 +1763,35 @@ static void define_split_vertices(Arena *arena, uint32_t cube_size,
                 V3 inner_start = v_lerp(start, y_i * factor, target_two);
                 V3 inner_target_one = v_lerp(target_one, y_i * factor, final);
 
-                cube->info[cur_index++] = (VertexInformation){
-                    .position = inner_start,
-                    .face_num = (float)face_id,
-                };
+                cube->info[cur_index++] = VERTEX(inner_start);
 
                 for (uint32_t x_i = 1; x_i < cube_size; ++x_i) {
-                    // two of them to allow for rotation
-                    cube->info[cur_index++] = (VertexInformation){
-                        .position =
-                            v_lerp(inner_start, x_i * factor, inner_target_one),
-                        .face_num = (float)face_id,
-                    };
+                    V3 position =
+                        v_lerp(inner_start, x_i * factor, inner_target_one);
 
-                    // (the second)
-                    cube->info[cur_index++] = (VertexInformation){
-                        .position =
-                            v_lerp(inner_start, x_i * factor, inner_target_one),
-                        .face_num = (float)face_id,
-                    };
+                    // two of them to allow for rotation
+                    cube->info[cur_index++] = VERTEX(position);
+                    cube->info[cur_index++] = VERTEX(position);
                 }
 
-                cube->info[cur_index++] = (VertexInformation){
-                    .position = inner_target_one,
-                    .face_num = (float)face_id,
-                };
+                cube->info[cur_index++] = VERTEX(inner_target_one);
             }
         }
 
         // bottom right
-        cube->info[cur_index++] = (VertexInformation){
-            .position = target_two,
-            .face_num = (float)face_id,
-        };
+        cube->info[cur_index++] = VERTEX(target_two);
 
         // right side
         for (uint32_t x_i = 1; x_i < cube_size; ++x_i) {
-            // two of them to allow for rotation
-            cube->info[cur_index++] = (VertexInformation){
-                .position = v_lerp(target_two, x_i * factor, final),
-                .face_num = (float)face_id,
-            };
+            V3 position = v_lerp(target_two, x_i * factor, final);
 
-            // (the second)
-            cube->info[cur_index++] = (VertexInformation){
-                .position = v_lerp(target_two, x_i * factor, final),
-                .face_num = (float)face_id,
-            };
+            // two of them to allow for rotation
+            cube->info[cur_index++] = VERTEX(position);
+            cube->info[cur_index++] = VERTEX(position);
         }
 
         // top right
-        cube->info[cur_index++] = (VertexInformation){
-            .position = final,
-            .face_num = (float)face_id,
-        };
+        cube->info[cur_index++] = VERTEX(final);
     }
 
     if (cur_index != split_vertex_count) {
@@ -1475,6 +1806,7 @@ static void define_split_vertices(Arena *arena, uint32_t cube_size,
                cube->info[i].position.z, (int)cube->info[i].face_num);
     }
 #endif
+#undef VERTEX
 }
 
 static uint32_t const EXP_SQUARE_VERTICES =
@@ -1584,15 +1916,18 @@ int graphics_main(void) {
     };
 
     if (arena_begin(arena) == 0) {
-        define_split_vertices(arena, cube_size, &app.cube);
         define_split_indices(arena, cube_size, &app.cube);
 
         while (!app.state.should_close) {
-            StateUpdate s_update;
+            if (arena_begin(arena) == 0) {
+                define_split_vertices(arena, cube_size, &app.cube);
 
-            s_update = get_inputs(&app);
-            update(&app, s_update);
-            render(&app);
+                StateUpdate s_update = get_inputs(&app);
+                update(&app, s_update);
+                render(&app);
+
+                arena_pop(arena);
+            }
         }
 
         arena_pop(arena);
