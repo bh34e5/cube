@@ -44,49 +44,41 @@ inline FaceIter begin_iter_faces() {
 }
 
 inline FaceIter next_face(FaceIter cur) {
-    if (cur.done) {
-        return cur;
-    }
+    if (cur.done) return cur;
 
     switch (cur.face) {
-    case WHITE:
-        return FaceIter{false, RED};
-    case RED:
-        return FaceIter{false, BLUE};
-    case BLUE:
-        return FaceIter{false, ORANGE};
-    case ORANGE:
-        return FaceIter{false, GREEN};
-    case GREEN:
-        return FaceIter{false, YELLOW};
-    case YELLOW:
-        return FaceIter{true, WHITE};
+    case WHITE:  return FaceIter{false, RED};
+    case RED:    return FaceIter{false, BLUE};
+    case BLUE:   return FaceIter{false, ORANGE};
+    case ORANGE: return FaceIter{false, GREEN};
+    case GREEN:  return FaceIter{false, YELLOW};
+    case YELLOW: return FaceIter{true,  WHITE};
     }
 
     unreachable;
 }
 
 struct CubeModel {
-    Face faces[FACE_COUNT][3][3] = {};
-    float face_rot[FACE_COUNT] = {};  // looking down at a face, rot CCW
-    float inner_rot[FACE_COUNT] = {}; // looking at a face, middle rot up
+    Face faces[FACE_COUNT][3][3];
+
+    // will have to do some management of these to make sure we don't have
+    // physically incapable motions
+    float xrot[3];
+    float yrot[3];
+    float zrot[3];
+
+    float radius;
 };
 
 inline uint face_idx(Face face) {
     assert(face >= WHITE && face <= YELLOW);
     switch (face) {
-    case WHITE:
-        return 0;
-    case RED:
-        return 1;
-    case BLUE:
-        return 2;
-    case ORANGE:
-        return 3;
-    case GREEN:
-        return 4;
-    case YELLOW:
-        return 5;
+    case WHITE:  return 0;
+    case RED:    return 1;
+    case BLUE:   return 2;
+    case ORANGE: return 3;
+    case GREEN:  return 4;
+    case YELLOW: return 5;
     }
 
     unreachable;
@@ -283,12 +275,7 @@ struct Vec3 {
     float x, y, z;
 };
 
-struct Cube {
-    Vec3 center;
-    float radius;
-};
-
-void bind_cube_pos_data(Cube const *cube, GLuint vbo, GLuint veo) {
+void bind_cube_pos_data(float cube_radius, GLuint vbo, GLuint veo) {
     GLfloat verts[8 * 3] = {
         -1.0f, -1.0f, -1.0f,
         -1.0f, -1.0f, +1.0f,
@@ -315,9 +302,9 @@ void bind_cube_pos_data(Cube const *cube, GLuint vbo, GLuint veo) {
     };
 
     for (uint i = 0; i < 8; ++i) {
-        verts[i * 3 + 0] = cube->radius * verts[i * 3 + 0] + cube->center.x;
-        verts[i * 3 + 1] = cube->radius * verts[i * 3 + 1] + cube->center.y;
-        verts[i * 3 + 2] = cube->radius * verts[i * 3 + 2] + cube->center.z;
+        verts[i * 3 + 0] = cube_radius * verts[i * 3 + 0];
+        verts[i * 3 + 1] = cube_radius * verts[i * 3 + 1];
+        verts[i * 3 + 2] = cube_radius * verts[i * 3 + 2];
     }
 
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
@@ -328,13 +315,43 @@ void bind_cube_pos_data(Cube const *cube, GLuint vbo, GLuint veo) {
                  GL_STATIC_DRAW);
 }
 
-void bind_cube_object_matrix(Cube const* cube, int x, int y, int z, GLint loc) {
+void bind_cube_object_matrix(CubeModel const* model, int x, int y, int z,
+                             GLint loc) {
+    float xrot = model->xrot[x];
+    float yrot = model->yrot[y];
+    float zrot = model->zrot[z];
+
+    GLfloat xrot_mat[16] = {
+        1.0f, 0.0f,       0.0f,        0.0f,
+        0.0f, cosf(xrot), -sinf(xrot), 0.0f,
+        0.0f, sinf(xrot), cosf(xrot),  0.0f,
+        0.0f, 0.0f,       0.0f,        1.0f,
+    };
+
+    GLfloat yrot_mat[16] = {
+        cosf(yrot),  0.0f, sinf(yrot), 0.0f,
+        0.0f,        1.0f, 0.0f,       0.0f,
+        -sinf(yrot), 0.0f, cosf(yrot), 0.0f,
+        0.0f,        0.0f, 0.0f,       1.0f,
+    };
+
+    GLfloat zrot_mat[16] = {
+        cosf(zrot), -sinf(zrot), 0.0f, 0.0f,
+        sinf(zrot), cosf(zrot),  0.0f, 0.0f,
+        0.0f,       0.0f,        1.0f, 0.0f,
+        0.0f,       0.0f,        0.0f, 1.0f,
+    };
+
     GLfloat mat[16] = {
-        1.0f, 0.0f, 0.0f, (x - 1) * 2.0f * cube->radius,
-        0.0f, 1.0f, 0.0f, (y - 1) * 2.0f * cube->radius,
-        0.0f, 0.0f, 1.0f, (z - 1) * 2.0f * cube->radius,
+        1.0f, 0.0f, 0.0f, (x - 1.0f) * 2.0f * model->radius,
+        0.0f, 1.0f, 0.0f, (y - 1.0f) * 2.0f * model->radius,
+        0.0f, 0.0f, 1.0f, (z - 1.0f) * 2.0f * model->radius,
         0.0f, 0.0f, 0.0f, 1.0f,
     };
+
+    mat_mult_left(xrot_mat, mat);
+    mat_mult_left(yrot_mat, mat);
+    mat_mult_left(zrot_mat, mat);
 
     glUniformMatrix4fv(loc, 1, GL_TRUE, mat);
 }
@@ -365,8 +382,9 @@ int main() {
     }
     glfwMakeContextCurrent(window);
 
-    CubeModel c = {};
-    init_cube(&c);
+    CubeModel _model = {{}, {}, {}, {}, 0.5f};
+    CubeModel *model = &_model;
+    init_cube(model);
 
     Context ctx = {};
     glfwSetWindowUserPointer(window, &ctx);
@@ -418,14 +436,15 @@ int main() {
                           (void const *)0);
     glEnableVertexAttribArray(loc);
 
-    Cube cube = {{0.0f, 0.0f, 0.0f}, 0.5f};
-    bind_cube_pos_data(&cube, vbo, veo);
+    bind_cube_pos_data(model->radius, vbo, veo);
 
     Camera cam = {};
     float cam_mat[16];
 
-    cam.tz = 10.0f;
+    cam.tz = 4.0f;
     get_camera(cam_mat, &cam);
+
+    int idx = 0;
 
     double target_time = 1.0 / 16.0 ; // seconds per frame
     double cur_time = glfwGetTime();
@@ -439,7 +458,7 @@ int main() {
         for (int x = 0; x < 3; ++x) {
             for (int y = 0; y < 3; ++y) {
                 for (int z = 0; z < 3; ++z) {
-                    bind_cube_object_matrix(&cube, x, y, z, loc);
+                    bind_cube_object_matrix(model, x, y, z, loc);
                     glDrawElements(GL_TRIANGLES, CUBE_INDEX_COUNT, GL_UNSIGNED_INT,
                                    (GLvoid const *)0);
                 }
@@ -478,6 +497,14 @@ int main() {
         int key_pu = glfwGetKey(window, GLFW_KEY_PAGE_UP);
         int key_pd = glfwGetKey(window, GLFW_KEY_PAGE_DOWN);
 
+        int key_z = glfwGetKey(window, GLFW_KEY_Z);
+        int key_x = glfwGetKey(window, GLFW_KEY_X);
+        int key_c = glfwGetKey(window, GLFW_KEY_C);
+
+        int key_1 = glfwGetKey(window, GLFW_KEY_1);
+        int key_2 = glfwGetKey(window, GLFW_KEY_2);
+        int key_3 = glfwGetKey(window, GLFW_KEY_3);
+
         double speed = 0.5;
 
         if (key_w) cam.ty += speed * delta_time;
@@ -493,6 +520,14 @@ int main() {
         if (key_ra) cam.roty -= speed * delta_time;
         if (key_pu) cam.rotz -= speed * delta_time;
         if (key_pd) cam.rotz += speed * delta_time;
+
+        if (key_1) idx = 0;
+        if (key_2) idx = 1;
+        if (key_3) idx = 2;
+
+        if (key_z) model->xrot[idx] += speed * delta_time;
+        if (key_x) model->yrot[idx] += speed * delta_time;
+        if (key_c) model->zrot[idx] += speed * delta_time;
 
         get_camera(cam_mat, &cam);
     }
