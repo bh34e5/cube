@@ -47,12 +47,12 @@ GLFWcursorposfun handle_cursor_pos = &_handle_cursor_pos;
 #define TRIANGLE_VERT_COUNT (FACE_COUNT * (2 * 3))
 
 enum Face {
-    WHITE,
-    RED,
-    BLUE,
-    ORANGE,
-    GREEN,
-    YELLOW,
+    YELLOW = 0,
+    RED    = 1,
+    BLUE   = 2,
+    ORANGE = 3,
+    GREEN  = 4,
+    WHITE  = 5,
 };
 
 struct FaceIter {
@@ -61,19 +61,19 @@ struct FaceIter {
 };
 
 inline FaceIter begin_iter_faces() {
-    return FaceIter{false, WHITE};
+    return FaceIter{false, YELLOW};
 }
 
 inline FaceIter next_face(FaceIter cur) {
     if (cur.done) return cur;
 
     switch (cur.face) {
-    case WHITE:  return FaceIter{false, RED};
+    case YELLOW: return FaceIter{false, RED};
     case RED:    return FaceIter{false, BLUE};
     case BLUE:   return FaceIter{false, ORANGE};
     case ORANGE: return FaceIter{false, GREEN};
-    case GREEN:  return FaceIter{false, YELLOW};
-    case YELLOW: return FaceIter{true,  WHITE};
+    case GREEN:  return FaceIter{false, WHITE};
+    case WHITE:  return FaceIter{true,  YELLOW};
     }
 
     unreachable;
@@ -92,14 +92,14 @@ struct CubeModel {
 };
 
 inline GLuint face_idx(Face face) {
-    assert(face >= WHITE && face <= YELLOW);
+    assert(face >= YELLOW && face <= WHITE);
     switch (face) {
-    case WHITE:  return 0;
+    case YELLOW: return 0;
     case RED:    return 1;
     case BLUE:   return 2;
     case ORANGE: return 3;
     case GREEN:  return 4;
-    case YELLOW: return 5;
+    case WHITE:  return 5;
     }
 
     unreachable;
@@ -124,6 +124,7 @@ char const *vert_shader_text = R"""(
 
 in vec3 pos;
 in float tex_ind;
+
 out vec3 pos_v;
 out float tex_ind_v;
 
@@ -159,7 +160,7 @@ void main() {
 
     color_out = (c > 1)
         ? vec4(0.2, 0.2, 0.2, 1.0)
-        : texture(face_colors, vec2(tex_ind_v, 0.0));
+        : texture(face_colors, vec2((tex_ind_v + 0.5) / 6.0, 0.5));
 }
 )""";
 
@@ -293,7 +294,7 @@ struct Vec3 {
     GLfloat x, y, z;
 };
 
-void bind_cube_pos_data(GLfloat cube_radius, GLuint vbo, GLuint veo) {
+void bind_cube_pos_data(GLfloat cube_radius, GLuint vbo) {
     GLfloat verts[] = {
         -1.0f, -1.0f, -1.0f, 0.0f,
         -1.0f, +1.0f, -1.0f, 0.0f,
@@ -301,30 +302,35 @@ void bind_cube_pos_data(GLfloat cube_radius, GLuint vbo, GLuint veo) {
         -1.0f, -1.0f, -1.0f, 0.0f,
         +1.0f, +1.0f, -1.0f, 0.0f,
         +1.0f, -1.0f, -1.0f, 0.0f,
+
         +1.0f, -1.0f, -1.0f, 1.0f,
         +1.0f, +1.0f, -1.0f, 1.0f,
         +1.0f, +1.0f, +1.0f, 1.0f,
         +1.0f, -1.0f, -1.0f, 1.0f,
         +1.0f, +1.0f, +1.0f, 1.0f,
         +1.0f, -1.0f, +1.0f, 1.0f,
+
         +1.0f, +1.0f, -1.0f, 2.0f,
         -1.0f, +1.0f, -1.0f, 2.0f,
         -1.0f, +1.0f, +1.0f, 2.0f,
         +1.0f, +1.0f, -1.0f, 2.0f,
         -1.0f, +1.0f, +1.0f, 2.0f,
         +1.0f, +1.0f, +1.0f, 2.0f,
+
         -1.0f, +1.0f, -1.0f, 3.0f,
         -1.0f, -1.0f, -1.0f, 3.0f,
         -1.0f, -1.0f, +1.0f, 3.0f,
         -1.0f, +1.0f, -1.0f, 3.0f,
         -1.0f, -1.0f, +1.0f, 3.0f,
         -1.0f, +1.0f, +1.0f, 3.0f,
+
         -1.0f, -1.0f, -1.0f, 4.0f,
         +1.0f, -1.0f, -1.0f, 4.0f,
         +1.0f, -1.0f, +1.0f, 4.0f,
         -1.0f, -1.0f, -1.0f, 4.0f,
         +1.0f, -1.0f, +1.0f, 4.0f,
         -1.0f, -1.0f, +1.0f, 4.0f,
+
         +1.0f, -1.0f, +1.0f, 5.0f,
         +1.0f, +1.0f, +1.0f, 5.0f,
         -1.0f, +1.0f, +1.0f, 5.0f,
@@ -373,14 +379,10 @@ void bind_cube_object_matrix(CubeModel const* model, int x, int y, int z,
         0.0f,       0.0f,        0.0f, 1.0f,
     };
 
-    GLfloat xf = GLfloat(x);
-    GLfloat yf = GLfloat(y);
-    GLfloat zf = GLfloat(z);
-
     GLfloat mat[16] = {
-        1.0f, 0.0f, 0.0f, (xf - 1.0f) * 2.0f * model->radius,
-        0.0f, 1.0f, 0.0f, (yf - 1.0f) * 2.0f * model->radius,
-        0.0f, 0.0f, 1.0f, (zf - 1.0f) * 2.0f * model->radius,
+        1.0f, 0.0f, 0.0f, (GLfloat(x) - 1.0f) * 2.0f * model->radius,
+        0.0f, 1.0f, 0.0f, (GLfloat(y) - 1.0f) * 2.0f * model->radius,
+        0.0f, 0.0f, 1.0f, (GLfloat(z) - 1.0f) * 2.0f * model->radius,
         0.0f, 0.0f, 0.0f, 1.0f,
     };
 
@@ -391,14 +393,57 @@ void bind_cube_object_matrix(CubeModel const* model, int x, int y, int z,
     glUniformMatrix4fv(loc, 1, GL_TRUE, mat);
 }
 
+void set_color(GLubyte dest[3], Face face) {
+    switch (face) {
+    case YELLOW: {dest[0] = 0xFF; dest[1] = 0xFF; dest[2] = 0x00;} break;
+    case RED:    {dest[0] = 0xFF; dest[1] = 0x00; dest[2] = 0x00;} break;
+    case BLUE:   {dest[0] = 0x00; dest[1] = 0x00; dest[2] = 0xFF;} break;
+    case ORANGE: {dest[0] = 0xFF; dest[1] = 0xA5; dest[2] = 0x00;} break;
+    case GREEN:  {dest[0] = 0x00; dest[1] = 0xFF; dest[2] = 0x00;} break;
+    case WHITE:  {dest[0] = 0xFF; dest[1] = 0xFF; dest[2] = 0xFF;} break;
+    default:
+        unreachable;
+    }
+}
+
 void bind_cube_texture(CubeModel const *model, GLuint x, GLuint y, GLuint z,
                        GLuint texture) {
     GLubyte colors[6 * 3] = {};
 
-    for (GLuint i = 0; i < 6; ++i) {
-        colors[3 * i + 0] = 64 * (x + 1) - 1;
-        colors[3 * i + 1] = 64 * (y + 1) - 1;
-        colors[3 * i + 2] = 64 * (z + 1) - 1;
+    switch (x) {
+    case 0: {
+        set_color(&colors[3 * 3], model->faces[3][y][z]);
+    } break;
+    case 1: {} break; // do nothing
+    case 2: {
+        set_color(&colors[1 * 3], model->faces[1][y][z]);
+    } break;
+    default:
+        unreachable;
+    }
+
+    switch (y) {
+    case 0: {
+        set_color(&colors[4 * 3], model->faces[4][z][x]);
+    } break;
+    case 1: {} break; // do nothing
+    case 2: {
+        set_color(&colors[2 * 3], model->faces[2][z][x]);
+    } break;
+    default:
+        unreachable;
+    }
+
+    switch (z) {
+    case 0: {
+        set_color(&colors[0 * 3], model->faces[0][x][y]);
+    } break;
+    case 1: {} break; // do nothing
+    case 2: {
+        set_color(&colors[5 * 3], model->faces[5][x][y]);
+    } break;
+    default:
+        unreachable;
     }
 
     glBindTexture(GL_TEXTURE_2D, texture);
@@ -461,12 +506,10 @@ int main() {
 
     GLuint vaos[27] = {};
     GLuint vbo = 0;
-    GLuint veo = 0;
     GLuint textures[27] = {};
 
     glGenVertexArrays(27, vaos);
     glGenBuffers(1, &vbo);
-    glGenBuffers(1, &veo);
     glGenTextures(27, textures);
 
     // TODO(bhester): tune these...
@@ -499,7 +542,7 @@ int main() {
                               (void const *)(3 * sizeof(GLfloat)));
         glEnableVertexAttribArray(tex_ind_loc);
 
-        bind_cube_pos_data(model->radius, vbo, veo);
+        bind_cube_pos_data(model->radius, vbo);
 
         glBindTexture(GL_TEXTURE_2D, texture);
 
@@ -580,7 +623,7 @@ int main() {
         int key_2 = glfwGetKey(window, GLFW_KEY_2);
         int key_3 = glfwGetKey(window, GLFW_KEY_3);
 
-        double speed = 0.5;
+        double speed = 1.0;
 
         if (key_w) cam.ty += speed * delta_time;
         if (key_a) cam.tx -= speed * delta_time;
@@ -608,7 +651,6 @@ int main() {
     }
 
     glDeleteTextures(27, textures);
-    glDeleteBuffers(1, &veo);
     glDeleteBuffers(1, &vbo);
     glDeleteVertexArrays(27, vaos);
 
