@@ -202,7 +202,7 @@ in vec3 pos_v;
 in float tex_ind_v;
 out vec4 color_out;
 
-uniform sampler2D face_colors;
+uniform sampler1D face_colors;
 
 void main() {
     vec3 mapped = (pos_v + 1.0) * 0.5;
@@ -218,7 +218,7 @@ void main() {
 
     color_out = (c > 1)
         ? vec4(0.2, 0.2, 0.2, 1.0)
-        : texture(face_colors, vec2((tex_ind_v + 0.5) / 6.0, 0.5));
+        : texture(face_colors, (tex_ind_v + 0.5) / 6.0);
 }
 )""";
 
@@ -662,11 +662,9 @@ int main() {
 
         glUniform1i(program->info.tex_loc, i);
 
-        glBindTexture(GL_TEXTURE_2D, program->texture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glBindTexture(GL_TEXTURE_1D, program->texture);
+        glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     }
 
     Camera cam = {};
@@ -714,8 +712,8 @@ int main() {
                     glUniformMatrix4fv(program.info.per_loc, 1, GL_TRUE, perspective_mat);
                     glUniformMatrix4fv(program.info.obj_loc, 1, GL_TRUE, obj_mat);
 
-                    glBindTexture(GL_TEXTURE_2D, program.texture);
-                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 6, 1, 0, GL_RGB,
+                    glBindTexture(GL_TEXTURE_1D, program.texture);
+                    glTexImage1D(GL_TEXTURE_1D, 0, GL_RGB, 6, 0, GL_RGB,
                                  GL_UNSIGNED_BYTE, colors);
 
                     glDrawArrays(GL_TRIANGLES, 0, TRIANGLE_VERT_COUNT);
