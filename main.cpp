@@ -227,8 +227,17 @@ struct Camera {
     GLfloat rotx, roty, rotz;
 };
 
-inline GLfloat row_mult(GLfloat lhs[16], GLfloat rhs[16], GLuint r, GLuint c)
-{
+inline void set_identity(GLfloat mat[16]) {
+    static GLfloat identity[16] = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f,
+    };
+    memmove(mat, identity, sizeof(identity));
+}
+
+inline GLfloat row_mult(GLfloat lhs[16], GLfloat rhs[16], GLuint r, GLuint c) {
     GLfloat val = 0.0f;
     for (GLuint i = 0; i < 4; ++i) {
         val += lhs[r * 4 + i] * rhs[i * 4 + c];
@@ -410,8 +419,8 @@ void bind_cube_pos_data(GLfloat cube_radius, GLuint vbo) {
     glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
 }
 
-void bind_cube_object_matrix(CubeModel const* model, int x, int y, int z,
-                             GLint loc) {
+void set_cube_obj_matrix(CubeModel const* model, int x, int y, int z,
+                             GLfloat mat[16]) {
     GLfloat xrot = model->xrot[x];
     GLfloat yrot = model->yrot[y];
     GLfloat zrot = model->zrot[z];
@@ -437,18 +446,18 @@ void bind_cube_object_matrix(CubeModel const* model, int x, int y, int z,
         0.0f,       0.0f,        0.0f, 1.0f,
     };
 
-    GLfloat mat[16] = {
+    GLfloat translation_mat[16] = {
         1.0f, 0.0f, 0.0f, (GLfloat(x) - 1.0f) * 2.0f * model->radius,
         0.0f, 1.0f, 0.0f, (GLfloat(y) - 1.0f) * 2.0f * model->radius,
         0.0f, 0.0f, 1.0f, (GLfloat(z) - 1.0f) * 2.0f * model->radius,
         0.0f, 0.0f, 0.0f, 1.0f,
     };
 
+    set_identity(mat);
+    mat_mult_left(translation_mat, mat);
     mat_mult_left(xrot_mat, mat);
     mat_mult_left(yrot_mat, mat);
     mat_mult_left(zrot_mat, mat);
-
-    glUniformMatrix4fv(loc, 1, GL_TRUE, mat);
 }
 
 void set_color(GLubyte dest[3], Face face) {
@@ -464,10 +473,8 @@ void set_color(GLubyte dest[3], Face face) {
     }
 }
 
-void bind_cube_texture(CubeModel const *model, GLuint x, GLuint y, GLuint z,
-                       GLuint texture) {
-    GLubyte colors[6 * 3] = {};
-
+void fill_cube_tex_colors(CubeModel const *model, GLuint x, GLuint y, GLuint z,
+                          GLubyte colors[6 * 3]) {
     switch (x) {
     case 0: {
         set_color(&colors[3 * 3], model->faces[3][y][z]);
@@ -503,10 +510,6 @@ void bind_cube_texture(CubeModel const *model, GLuint x, GLuint y, GLuint z,
     default:
         unreachable;
     }
-
-    glBindTexture(GL_TEXTURE_2D, texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 6, 1, 0, GL_RGB, GL_UNSIGNED_BYTE,
-                 colors);
 }
 
 inline GLfloat screen_to_near_x(double x, double screen_width,
@@ -518,6 +521,62 @@ inline GLfloat screen_to_near_y(double y, double screen_height,
                                 PerspectiveProps props) {
     double inv_y = screen_height - y;
     return GLfloat((inv_y / screen_height - 0.5) * props.height);
+}
+
+struct CubeProgramInfo {
+    GLint obj_loc;
+    GLint cam_loc;
+    GLint per_loc;
+    GLint tex_loc;
+
+    GLint pos_loc;
+    GLint tex_ind_loc;
+};
+
+struct CubeProgram {
+    GLuint prog;
+    CubeProgramInfo info;
+
+    GLuint vao;
+    GLuint vbo;
+    GLuint texture;
+};
+
+CubeProgram get_cube_program() {
+    GLuint vao = 0;
+    GLuint vbo = 0;
+    GLuint texture = 0;
+
+    GLuint prog = compile_link_program(vert_shader_text, frag_shader_text);
+    glUseProgram(prog);
+
+    GLint obj_loc = glGetUniformLocation(prog, "object");
+    GLint cam_loc = glGetUniformLocation(prog, "camera");
+    GLint per_loc = glGetUniformLocation(prog, "perspective");
+    GLint tex_loc = glGetUniformLocation(prog, "face_colors");
+
+    GLint pos_loc = glGetAttribLocation(prog, "pos");
+    GLint tex_ind_loc = glGetAttribLocation(prog, "tex_ind");
+
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+    glGenTextures(1, &texture);
+
+    CubeProgram cube_program = {
+        prog,
+        {obj_loc, cam_loc, per_loc, tex_loc, pos_loc, tex_ind_loc},
+        vao,
+        vbo,
+        texture,
+    };
+    return cube_program;
+}
+
+void cleanup_cube_program(CubeProgram cube_program) {
+    glDeleteTextures(1, &cube_program.texture);
+    glDeleteBuffers(1, &cube_program.vbo);
+    glDeleteVertexArrays(1, &cube_program.vao);
+    glDeleteProgram(cube_program.prog);
 }
 
 int main() {
@@ -555,6 +614,10 @@ int main() {
     glCullFace(GL_BACK);
     glFrontFace(GL_CCW);
 
+    GLint max_tex_image_units = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &max_tex_image_units);
+    assert(max_tex_image_units >= 27);
+
     GLfloat cube_radius = (1.0f / 7.0f);
     CubeModel _model = {{}, {}, {}, {}, cube_radius};
     CubeModel *model = &_model;
@@ -570,47 +633,36 @@ int main() {
     glfwSetFramebufferSizeCallback(window, handle_framebuffer_size);
     glfwSetCursorPosCallback(window, _handle_cursor_pos);
 
-    GLuint prog = compile_link_program(vert_shader_text, frag_shader_text);
-
-    glUseProgram(prog);
-    GLint obj_loc = glGetUniformLocation(prog, "object");
-    GLint cam_loc = glGetUniformLocation(prog, "camera");
-    GLint per_loc = glGetUniformLocation(prog, "perspective");
-    GLint pos_loc = glGetAttribLocation(prog, "pos");
-    GLint tex_ind_loc = glGetAttribLocation(prog, "tex_ind");
-
-    GLuint vaos[27] = {};
-    GLuint vbo = 0;
-    GLuint textures[27] = {};
-
-    glGenVertexArrays(27, vaos);
-    glGenBuffers(1, &vbo);
-    glGenTextures(27, textures);
-
     // TODO(bhester): tune these...
     GLfloat perspective_mat[16] = {};
     init_perspective_mat(ctx->props, perspective_mat);
 
+    CubeProgram programs[27] = {};
     for (GLuint i = 0; i < 27; ++i) {
-        GLuint vao = vaos[i];
-        GLuint texture = textures[i];
+        CubeProgram *program = programs + i;
 
-        glBindVertexArray(vao);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        *program = get_cube_program();
 
-        glVertexAttribPointer(pos_loc, 3, GL_FLOAT, GL_FALSE,
+        glUseProgram(program->prog);
+        glBindVertexArray(program->vao);
+        glActiveTexture((GL_TEXTURE0) + i);
+
+        glBindBuffer(GL_ARRAY_BUFFER, program->vbo);
+
+        glVertexAttribPointer(program->info.pos_loc, 3, GL_FLOAT, GL_FALSE,
                               4 * sizeof(GLfloat), (void const *)0);
-        glEnableVertexAttribArray(pos_loc);
+        glEnableVertexAttribArray(program->info.pos_loc);
 
-        glVertexAttribPointer(tex_ind_loc, 1, GL_FLOAT, GL_FALSE,
+        glVertexAttribPointer(program->info.tex_ind_loc, 1, GL_FLOAT, GL_FALSE,
                               4 * sizeof(GLfloat),
                               (void const *)(3 * sizeof(GLfloat)));
-        glEnableVertexAttribArray(tex_ind_loc);
+        glEnableVertexAttribArray(program->info.tex_ind_loc);
 
-        bind_cube_pos_data(model->radius, vbo);
+        bind_cube_pos_data(model->radius, program->vbo);
 
-        glBindTexture(GL_TEXTURE_2D, texture);
+        glUniform1i(program->info.tex_loc, i);
 
+        glBindTexture(GL_TEXTURE_2D, program->texture);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -641,20 +693,31 @@ int main() {
             printf("near_x = %f, near_y = %f\n", near_x, near_y);
         }
 
-        glUniformMatrix4fv(cam_loc, 1, GL_TRUE, cam_mat);
-
         for (int x = 0; x < 3; ++x) {
             for (int y = 0; y < 3; ++y) {
                 for (int z = 0; z < 3; ++z) {
                     int index = 3 * (3 * (x) + y) + z;
-                    GLuint vao = vaos[index];
-                    GLuint texture = textures[index];
+                    CubeProgram program = programs[index];
 
-                    glBindVertexArray(vao);
-                    glUniformMatrix4fv(per_loc, 1, GL_TRUE, perspective_mat);
+                    GLfloat obj_mat[16] = {};
+                    GLubyte colors[6 * 3] = {};
 
-                    bind_cube_object_matrix(model, x, y, z, obj_loc);
-                    bind_cube_texture(model, x, y, z, texture);
+                    set_cube_obj_matrix(model, x, y, z, obj_mat);
+                    fill_cube_tex_colors(model, x, y, z, colors);
+
+                    glUseProgram(program.prog);
+                    glBindVertexArray(program.vao);
+                    glActiveTexture((GL_TEXTURE0) + index);
+
+                    // TODO(bhester): consider using glUinform
+                    glUniformMatrix4fv(program.info.cam_loc, 1, GL_TRUE, cam_mat);
+                    glUniformMatrix4fv(program.info.per_loc, 1, GL_TRUE, perspective_mat);
+                    glUniformMatrix4fv(program.info.obj_loc, 1, GL_TRUE, obj_mat);
+
+                    glBindTexture(GL_TEXTURE_2D, program.texture);
+                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 6, 1, 0, GL_RGB,
+                                 GL_UNSIGNED_BYTE, colors);
+
                     glDrawArrays(GL_TRIANGLES, 0, TRIANGLE_VERT_COUNT);
                 }
             }
@@ -727,9 +790,9 @@ int main() {
         get_camera(cam_mat, &cam);
     }
 
-    glDeleteTextures(27, textures);
-    glDeleteBuffers(1, &vbo);
-    glDeleteVertexArrays(27, vaos);
+    for (GLuint i = 0; i < 27; ++i) {
+        cleanup_cube_program(programs[i]);
+    }
 
     glfwDestroyWindow(window);
     glfwTerminate();
