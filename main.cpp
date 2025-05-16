@@ -3,39 +3,93 @@
 #include <GLFW/glfw3.h>
 
 #include <assert.h>
-#include <unistd.h>
 #include <math.h>
 #include <string.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <unistd.h>
 
 #define unreachable _unreachable(__FILE__, __LINE__)
 #define _unreachable(f, l) __unreachable(f, l)
 #define __unreachable(f, l) assert(0 && ("Unreachable at " #f #l))
 
-struct Context {
-    double xpos, ypos;
+#define PIX_TO_SCREEN (1.0 / 320.0)
+
+struct PerspectiveProps {
+    GLfloat near;
+    GLfloat far;
+    GLfloat width;
+    GLfloat height;
 };
+
+// requires the matrix is zero-initialized
+inline void init_perspective_mat(PerspectiveProps props, GLfloat mat[16]) {
+    // GLfloat perspective_mat[16] = {
+    //     2.0f * near / width, 0.0f,                 0.0f,                         0.0f,
+    //     0.0f,                2.0f * near / height, 0.0f,                         0.0f,
+    //     0.0f,                0.0f,                 -(far + near) / (far - near), -2.0f * far * near / (far - near),
+    //     0.0f,                0.0f,                 -1.0f,                        0.0f,
+    // };
+
+    // fill in the values we know
+    mat[0] = 2.0f * props.near / props.width;
+    mat[5] = 2.0f * props.near / props.height;
+    mat[10] = -(props.far + props.near) / (props.far - props.near);
+    mat[11] = -2.0f * props.far * props.near / (props.far - props.near);
+    mat[14] = -1.0f;
+}
+
+struct Context {
+    int width, height;
+    double xpos, ypos;
+
+    PerspectiveProps props;
+};
+
+void init_context(Context *ctx, int width, int height) {
+    double d_width = width;
+    double d_height = height;
+
+    ctx->width = width;
+    ctx->height = height;
+    ctx->xpos = 0.0f;
+    ctx->ypos = 0.0f;
+    ctx->props = (PerspectiveProps){
+        .near = 12.0f,
+        .far = 24.0f,
+        .width = GLfloat(d_width * PIX_TO_SCREEN),
+        .height = GLfloat(d_height * PIX_TO_SCREEN),
+    };
+}
 
 Context *get_context(GLFWwindow *window) {
     assert(window != nullptr);
-    Context *ctx = static_cast<Context *>(glfwGetWindowUserPointer(window));
+    void *usr_ptr = glfwGetWindowUserPointer(window);
 
-    assert(ctx != nullptr);
-    return ctx;
+    assert(usr_ptr != nullptr);
+    return static_cast<Context *>(usr_ptr);
 }
 
 void handle_error(int error, char const *description) {
     fprintf(stderr, "GLFW Error (%d)): %s\n", error, description);
 }
 
-void _handle_framebuffer_size(GLFWwindow *, int width, int height) {
+void _handle_framebuffer_size(GLFWwindow *window, int width, int height) {
+    Context *ctx = get_context(window);
+
+    double d_width = width;
+    double d_height = height;
+
+    ctx->width = width;
+    ctx->height = height;
+    ctx->props.width = GLfloat(d_width * PIX_TO_SCREEN),
+    ctx->props.height = GLfloat(d_height * PIX_TO_SCREEN),
+
     glViewport(0, 0, width, height);
 }
 
 void _handle_cursor_pos(GLFWwindow* window, double xpos, double ypos) {
     Context *ctx = get_context(window);
-
     ctx->xpos = xpos;
     ctx->ypos = ypos;
 }
@@ -154,9 +208,13 @@ void main() {
     vec3 mapped = (pos_v + 1.0) * 0.5;
 
     int c = 0;
-    if (abs(pos_v.x) > 0.4) ++c;
-    if (abs(pos_v.y) > 0.4) ++c;
-    if (abs(pos_v.z) > 0.4) ++c;
+
+    float cube_radius = (1.0 / 7.0); // FIXME(bhester): get cube radius from uniform
+    float check_val = cube_radius * 0.8;
+
+    if (abs(pos_v.x) > check_val) ++c;
+    if (abs(pos_v.y) > check_val) ++c;
+    if (abs(pos_v.z) > check_val) ++c;
 
     color_out = (c > 1)
         ? vec4(0.2, 0.2, 0.2, 1.0)
@@ -451,6 +509,17 @@ void bind_cube_texture(CubeModel const *model, GLuint x, GLuint y, GLuint z,
                  colors);
 }
 
+inline GLfloat screen_to_near_x(double x, double screen_width,
+                                PerspectiveProps props) {
+    return GLfloat((x / screen_width - 0.5) * props.width);
+}
+
+inline GLfloat screen_to_near_y(double y, double screen_height,
+                                PerspectiveProps props) {
+    double inv_y = screen_height - y;
+    return GLfloat((inv_y / screen_height - 0.5) * props.height);
+}
+
 int main() {
     glfwSetErrorCallback(&handle_error);
 
@@ -464,25 +533,20 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow *window =
-        glfwCreateWindow(640, 640, "Hello, world", nullptr, nullptr);
-
-    glfwSetWindowPos(window, 600, 400);
-    glfwShowWindow(window);
+    int init_width = 640;
+    int init_height = 640;
+    GLFWwindow *window = glfwCreateWindow(init_width, init_height,
+                                          "Hello, world", nullptr, nullptr);
 
     if (window == nullptr) {
         fprintf(stderr, "Failed to create window\n");
         glfwTerminate();
         return 1;
     }
+
+    glfwSetWindowPos(window, 600, 400);
+    glfwShowWindow(window);
     glfwMakeContextCurrent(window);
-
-    CubeModel _model = {{}, {}, {}, {}, 0.5f};
-    CubeModel *model = &_model;
-    init_cube(model);
-
-    Context ctx = {};
-    glfwSetWindowUserPointer(window, &ctx);
 
     glClearColor(0.0, 0.0, 0.0, 0.0);
 
@@ -490,6 +554,17 @@ int main() {
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
     glFrontFace(GL_CCW);
+
+    GLfloat cube_radius = (1.0f / 7.0f);
+    CubeModel _model = {{}, {}, {}, {}, cube_radius};
+    CubeModel *model = &_model;
+    init_cube(model);
+
+    Context _ctx = {};
+    Context *ctx = &_ctx;
+    init_context(ctx, init_width, init_height);
+
+    glfwSetWindowUserPointer(window, ctx);
 
     // callbacks
     glfwSetFramebufferSizeCallback(window, handle_framebuffer_size);
@@ -513,16 +588,8 @@ int main() {
     glGenTextures(27, textures);
 
     // TODO(bhester): tune these...
-    GLfloat near = 1.0f;
-    GLfloat far = 12.0f;
-    GLfloat width = 2.0f;
-    GLfloat height = 2.0f;
-    GLfloat perspective_mat[16] = {
-        2.0f * near / width, 0.0f,                 0.0f,                         0.0f,
-        0.0f,                2.0f * near / height, 0.0f,                         0.0f,
-        0.0f,                0.0f,                 -(far + near) / (far - near), -2.0f * far * near / (far - near),
-        0.0f,                0.0f,                 -1.0f,                        0.0f,
-    };
+    GLfloat perspective_mat[16] = {};
+    init_perspective_mat(ctx->props, perspective_mat);
 
     for (GLuint i = 0; i < 27; ++i) {
         GLuint vao = vaos[i];
@@ -530,8 +597,6 @@ int main() {
 
         glBindVertexArray(vao);
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
-
-        glUniformMatrix4fv(per_loc, 1, GL_TRUE, perspective_mat);
 
         glVertexAttribPointer(pos_loc, 3, GL_FLOAT, GL_FALSE,
                               4 * sizeof(GLfloat), (void const *)0);
@@ -555,15 +620,26 @@ int main() {
     Camera cam = {};
     GLfloat cam_mat[16];
 
-    cam.tz = 4.0f;
+    cam.tz = 16.0f;
     get_camera(cam_mat, &cam);
 
     int idx = 0;
 
     double target_time = 1.0 / 16.0 ; // seconds per frame
     double cur_time = glfwGetTime();
+
     while (!glfwWindowShouldClose(window)) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // FIXME(bhester): do I want to have some flag that tells me when I need
+        // to do this? Or just do it anyway since its like 5 numbers
+        init_perspective_mat(ctx->props, perspective_mat);
+
+        GLfloat near_x = screen_to_near_x(ctx->xpos, ctx->width, ctx->props);
+        GLfloat near_y = screen_to_near_y(ctx->ypos, ctx->height, ctx->props);
+        if (glfwGetKey(window, GLFW_KEY_P)) {
+            printf("near_x = %f, near_y = %f\n", near_x, near_y);
+        }
 
         glUniformMatrix4fv(cam_loc, 1, GL_TRUE, cam_mat);
 
@@ -575,6 +651,7 @@ int main() {
                     GLuint texture = textures[index];
 
                     glBindVertexArray(vao);
+                    glUniformMatrix4fv(per_loc, 1, GL_TRUE, perspective_mat);
 
                     bind_cube_object_matrix(model, x, y, z, obj_loc);
                     bind_cube_texture(model, x, y, z, texture);
@@ -632,12 +709,12 @@ int main() {
         if (key_i) cam.tz -= speed * delta_time;
         if (key_o) cam.tz += speed * delta_time;
 
-        if (key_ua) cam.rotx += speed * delta_time;
-        if (key_la) cam.roty += speed * delta_time;
-        if (key_da) cam.rotx -= speed * delta_time;
-        if (key_ra) cam.roty -= speed * delta_time;
-        if (key_pu) cam.rotz -= speed * delta_time;
-        if (key_pd) cam.rotz += speed * delta_time;
+        if (key_ua) cam.rotx += (speed * 0.125f) * delta_time;
+        if (key_la) cam.roty += (speed * 0.125f) * delta_time;
+        if (key_da) cam.rotx -= (speed * 0.125f) * delta_time;
+        if (key_ra) cam.roty -= (speed * 0.125f) * delta_time;
+        if (key_pu) cam.rotz -= (speed * 0.125f) * delta_time;
+        if (key_pd) cam.rotz += (speed * 0.125f) * delta_time;
 
         if (key_1) idx = 0;
         if (key_2) idx = 1;
