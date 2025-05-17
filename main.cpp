@@ -8,10 +8,58 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <float.h>
 
 #define unreachable _unreachable(__FILE__, __LINE__)
 #define _unreachable(f, l) __unreachable(f, l)
 #define __unreachable(f, l) assert(0 && ("Unreachable at " #f #l))
+
+#define FACE_COUNT (6)
+#define TRIANGLE_VERT_COUNT (FACE_COUNT * (2 * 3))
+
+GLfloat const verts[TRIANGLE_VERT_COUNT * 4] = {
+    -1.0f, -1.0f, -1.0f, 0.0f,
+    -1.0f, +1.0f, -1.0f, 0.0f,
+    +1.0f, +1.0f, -1.0f, 0.0f,
+    -1.0f, -1.0f, -1.0f, 0.0f,
+    +1.0f, +1.0f, -1.0f, 0.0f,
+    +1.0f, -1.0f, -1.0f, 0.0f,
+
+    +1.0f, -1.0f, -1.0f, 1.0f,
+    +1.0f, +1.0f, -1.0f, 1.0f,
+    +1.0f, +1.0f, +1.0f, 1.0f,
+    +1.0f, -1.0f, -1.0f, 1.0f,
+    +1.0f, +1.0f, +1.0f, 1.0f,
+    +1.0f, -1.0f, +1.0f, 1.0f,
+
+    +1.0f, +1.0f, -1.0f, 2.0f,
+    -1.0f, +1.0f, -1.0f, 2.0f,
+    -1.0f, +1.0f, +1.0f, 2.0f,
+    +1.0f, +1.0f, -1.0f, 2.0f,
+    -1.0f, +1.0f, +1.0f, 2.0f,
+    +1.0f, +1.0f, +1.0f, 2.0f,
+
+    -1.0f, +1.0f, -1.0f, 3.0f,
+    -1.0f, -1.0f, -1.0f, 3.0f,
+    -1.0f, -1.0f, +1.0f, 3.0f,
+    -1.0f, +1.0f, -1.0f, 3.0f,
+    -1.0f, -1.0f, +1.0f, 3.0f,
+    -1.0f, +1.0f, +1.0f, 3.0f,
+
+    -1.0f, -1.0f, -1.0f, 4.0f,
+    +1.0f, -1.0f, -1.0f, 4.0f,
+    +1.0f, -1.0f, +1.0f, 4.0f,
+    -1.0f, -1.0f, -1.0f, 4.0f,
+    +1.0f, -1.0f, +1.0f, 4.0f,
+    -1.0f, -1.0f, +1.0f, 4.0f,
+
+    +1.0f, -1.0f, +1.0f, 5.0f,
+    +1.0f, +1.0f, +1.0f, 5.0f,
+    -1.0f, +1.0f, +1.0f, 5.0f,
+    +1.0f, -1.0f, +1.0f, 5.0f,
+    -1.0f, +1.0f, +1.0f, 5.0f,
+    -1.0f, -1.0f, +1.0f, 5.0f,
+};
 
 #define PIX_TO_SCREEN (1.0 / 320.0)
 
@@ -97,9 +145,6 @@ void _handle_cursor_pos(GLFWwindow* window, double xpos, double ypos) {
 GLFWframebuffersizefun handle_framebuffer_size = &_handle_framebuffer_size;
 GLFWcursorposfun handle_cursor_pos = &_handle_cursor_pos;
 
-#define FACE_COUNT (6)
-#define TRIANGLE_VERT_COUNT (FACE_COUNT * (2 * 3))
-
 enum Face {
     YELLOW = 0,
     RED    = 1,
@@ -108,6 +153,20 @@ enum Face {
     GREEN  = 4,
     WHITE  = 5,
 };
+
+inline GLuint face_idx(Face face) {
+    assert(face >= YELLOW && face <= WHITE);
+    switch (face) {
+    case YELLOW: return 0;
+    case RED:    return 1;
+    case BLUE:   return 2;
+    case ORANGE: return 3;
+    case GREEN:  return 4;
+    case WHITE:  return 5;
+    }
+
+    unreachable;
+}
 
 struct FaceIter {
     bool done;
@@ -144,20 +203,6 @@ struct CubeModel {
 
     GLfloat radius;
 };
-
-inline GLuint face_idx(Face face) {
-    assert(face >= YELLOW && face <= WHITE);
-    switch (face) {
-    case YELLOW: return 0;
-    case RED:    return 1;
-    case BLUE:   return 2;
-    case ORANGE: return 3;
-    case GREEN:  return 4;
-    case WHITE:  return 5;
-    }
-
-    unreachable;
-}
 
 void init_cube(CubeModel *cube) {
     FaceIter iter = begin_iter_faces();
@@ -203,6 +248,7 @@ in float tex_ind_v;
 out vec4 color_out;
 
 uniform sampler1D face_colors;
+uniform float intersection_face;
 
 void main() {
     vec3 mapped = (pos_v + 1.0) * 0.5;
@@ -219,6 +265,11 @@ void main() {
     color_out = (c > 1)
         ? vec4(0.2, 0.2, 0.2, 1.0)
         : texture(face_colors, (tex_ind_v + 0.5) / 6.0);
+
+    if (intersection_face > 0 && abs(tex_ind_v - intersection_face) < 1e-3) {
+        // dim the intersected face
+        color_out.rgb = 0.6 * color_out.rgb;
+    }
 }
 )";
 
@@ -400,61 +451,17 @@ struct Vec3 {
 };
 
 void bind_cube_pos_data(GLfloat cube_radius, GLuint vbo) {
-    GLfloat verts[] = {
-        -1.0f, -1.0f, -1.0f, 0.0f,
-        -1.0f, +1.0f, -1.0f, 0.0f,
-        +1.0f, +1.0f, -1.0f, 0.0f,
-        -1.0f, -1.0f, -1.0f, 0.0f,
-        +1.0f, +1.0f, -1.0f, 0.0f,
-        +1.0f, -1.0f, -1.0f, 0.0f,
+    GLfloat scaled[TRIANGLE_VERT_COUNT * 4] = {};
+    memmove(scaled, verts, sizeof(verts));
 
-        +1.0f, -1.0f, -1.0f, 1.0f,
-        +1.0f, +1.0f, -1.0f, 1.0f,
-        +1.0f, +1.0f, +1.0f, 1.0f,
-        +1.0f, -1.0f, -1.0f, 1.0f,
-        +1.0f, +1.0f, +1.0f, 1.0f,
-        +1.0f, -1.0f, +1.0f, 1.0f,
-
-        +1.0f, +1.0f, -1.0f, 2.0f,
-        -1.0f, +1.0f, -1.0f, 2.0f,
-        -1.0f, +1.0f, +1.0f, 2.0f,
-        +1.0f, +1.0f, -1.0f, 2.0f,
-        -1.0f, +1.0f, +1.0f, 2.0f,
-        +1.0f, +1.0f, +1.0f, 2.0f,
-
-        -1.0f, +1.0f, -1.0f, 3.0f,
-        -1.0f, -1.0f, -1.0f, 3.0f,
-        -1.0f, -1.0f, +1.0f, 3.0f,
-        -1.0f, +1.0f, -1.0f, 3.0f,
-        -1.0f, -1.0f, +1.0f, 3.0f,
-        -1.0f, +1.0f, +1.0f, 3.0f,
-
-        -1.0f, -1.0f, -1.0f, 4.0f,
-        +1.0f, -1.0f, -1.0f, 4.0f,
-        +1.0f, -1.0f, +1.0f, 4.0f,
-        -1.0f, -1.0f, -1.0f, 4.0f,
-        +1.0f, -1.0f, +1.0f, 4.0f,
-        -1.0f, -1.0f, +1.0f, 4.0f,
-
-        +1.0f, -1.0f, +1.0f, 5.0f,
-        +1.0f, +1.0f, +1.0f, 5.0f,
-        -1.0f, +1.0f, +1.0f, 5.0f,
-        +1.0f, -1.0f, +1.0f, 5.0f,
-        -1.0f, +1.0f, +1.0f, 5.0f,
-        -1.0f, -1.0f, +1.0f, 5.0f,
-    };
-
-    GLuint total_count = sizeof(verts) / sizeof(*verts);
-    GLuint row_count = total_count / 4;
-
-    for (GLuint i = 0; i < row_count; ++i) {
-        verts[i * 4 + 0] *= cube_radius;
-        verts[i * 4 + 1] *= cube_radius;
-        verts[i * 4 + 2] *= cube_radius;
+    for (GLuint i = 0; i < TRIANGLE_VERT_COUNT; ++i) {
+        scaled[i * 4 + 0] *= cube_radius;
+        scaled[i * 4 + 1] *= cube_radius;
+        scaled[i * 4 + 2] *= cube_radius;
     }
 
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(scaled), scaled, GL_STATIC_DRAW);
 }
 
 void set_cube_obj_matrix(CubeModel const* model, int x, int y, int z,
@@ -562,13 +569,16 @@ inline GLfloat screen_to_near_y(double y, double screen_height,
 }
 
 struct CubeProgramInfo {
-    GLint obj_loc;
-    GLint cam_loc;
-    GLint per_loc;
-    GLint tex_loc;
+    // uniforms
+    GLint obj_loc;     // the cube's object matrix
+    GLint cam_loc;     // the camera matrix
+    GLint per_loc;     // the perspective matrix
+    GLint tex_loc;     // the face color texture
+    GLint ix_face_loc; // the intersection face
 
-    GLint pos_loc;
-    GLint tex_ind_loc;
+    // attributes
+    GLint pos_loc;     // the position attribute (x,y,z)
+    GLint tex_ind_loc; // the face color texture index
 };
 
 struct CubeProgram {
@@ -592,6 +602,7 @@ CubeProgram get_cube_program() {
     GLint cam_loc = glGetUniformLocation(prog, "camera");
     GLint per_loc = glGetUniformLocation(prog, "perspective");
     GLint tex_loc = glGetUniformLocation(prog, "face_colors");
+    GLint ix_face_loc = glGetUniformLocation(prog, "intersection_face");
 
     GLint pos_loc = glGetAttribLocation(prog, "pos");
     GLint tex_ind_loc = glGetAttribLocation(prog, "tex_ind");
@@ -602,7 +613,7 @@ CubeProgram get_cube_program() {
 
     CubeProgram cube_program = {
         prog,
-        {obj_loc, cam_loc, per_loc, tex_loc, pos_loc, tex_ind_loc},
+        {obj_loc, cam_loc, per_loc, tex_loc, ix_face_loc, pos_loc, tex_ind_loc},
         vao,
         vbo,
         texture,
@@ -618,7 +629,7 @@ void cleanup_cube_program(CubeProgram cube_program) {
 }
 
 bool triangle_intersects(GLfloat x, GLfloat y, GLfloat z, GLfloat a[3],
-                         GLfloat b[3], GLfloat c[3]) {
+                         GLfloat b[3], GLfloat c[3], GLfloat ix[3]) {
     // We have a ray from the origin, and a plane in space. If the plane went
     // through the origin as well, then the intersection point would be the
     // origin. We can define the plane with (a) and the normal of the plane
@@ -662,7 +673,7 @@ bool triangle_intersects(GLfloat x, GLfloat y, GLfloat z, GLfloat a[3],
     };
 
     GLfloat det = veclen<3>(cross);
-    if (det < 1e-3) {
+    if (fabsf(det) < 1e-3) {
         // singular matrix, we have a degenerate triangle
         return false;
     }
@@ -685,7 +696,7 @@ bool triangle_intersects(GLfloat x, GLfloat y, GLfloat z, GLfloat a[3],
     GLfloat a_cross = vecdot<3>(a, cross);
     GLfloat xyz_cross = vecdot<3>(ray, cross);
 
-    if (xyz_cross < 1e-3) {
+    if (xyz_cross > 0.0f) {
         // pretty sure there is no way for this to be intersecting?
         return false;
     }
@@ -703,6 +714,9 @@ bool triangle_intersects(GLfloat x, GLfloat y, GLfloat z, GLfloat a[3],
     GLfloat x_comp = components[0];
     GLfloat y_comp = components[1];
     if (x_comp > 0 && y_comp > 0 && ((x_comp + y_comp) <= 1.0f)) {
+        GLfloat unadjusted[3] = {x * t, y * t, z * t};
+        memmove(ix, unadjusted, sizeof(unadjusted));
+
         return true;
     }
     return false;
@@ -710,52 +724,34 @@ bool triangle_intersects(GLfloat x, GLfloat y, GLfloat z, GLfloat a[3],
 
 // Tests whether a ray given by (x, y, z) intersects with the given cube
 bool cube_intersects(GLfloat x, GLfloat y, GLfloat z, CubeModel const *model,
-                     GLfloat obj_mat[16], GLfloat cam_mat[16]) {
-    GLfloat corners[8 * 3] = {
-        -1.0f, -1.0f, -1.0f,
-        -1.0f, -1.0f, +1.0f,
-        -1.0f, +1.0f, -1.0f,
-        -1.0f, +1.0f, +1.0f,
-        +1.0f, -1.0f, -1.0f,
-        +1.0f, -1.0f, +1.0f,
-        +1.0f, +1.0f, -1.0f,
-        +1.0f, +1.0f, +1.0f,
-    };
+                     GLfloat obj_mat[16], GLfloat cam_mat[16], GLfloat *face) {
+    bool found = false;
 
-    GLint indices[] = {
-        0, 2, 6,
-        0, 6, 4,
-        4, 6, 7,
-        4, 7, 5,
-        6, 2, 3,
-        6, 3, 7,
-        2, 0, 1,
-        2, 1, 3,
-        0, 4, 5,
-        0, 5, 1,
-        5, 7, 3,
-        5, 3, 1,
-    };
+    GLfloat nearest_dist = FLT_MAX;
+    GLfloat nearest_face = {};
 
-    GLuint index_count = sizeof(indices) / sizeof(*indices);
-    GLuint triangle_count = index_count / 3;
-
+    GLuint triangle_count = TRIANGLE_VERT_COUNT / 3;
     for (GLuint t = 0; t < triangle_count; ++t) {
-        GLuint ca = indices[t * 3 + 0];
-        GLuint cb = indices[t * 3 + 1];
-        GLuint cc = indices[t * 3 + 2];
+        GLuint tbase = t * 3 * 4;
 
-        GLfloat ca_x = corners[ca * 3 + 0] * model->radius;
-        GLfloat ca_y = corners[ca * 3 + 1] * model->radius;
-        GLfloat ca_z = corners[ca * 3 + 2] * model->radius;
+        GLfloat ca_face = verts[tbase + 0 * 4 + 3];
+        GLfloat cb_face = verts[tbase + 1 * 4 + 3];
+        GLfloat cc_face = verts[tbase + 2 * 4 + 3];
 
-        GLfloat cb_x = corners[cb * 3 + 0] * model->radius;
-        GLfloat cb_y = corners[cb * 3 + 1] * model->radius;
-        GLfloat cb_z = corners[cb * 3 + 2] * model->radius;
+        assert(ca_face == cb_face);
+        assert(ca_face == cc_face);
 
-        GLfloat cc_x = corners[cc * 3 + 0] * model->radius;
-        GLfloat cc_y = corners[cc * 3 + 1] * model->radius;
-        GLfloat cc_z = corners[cc * 3 + 2] * model->radius;
+        GLfloat ca_x = verts[tbase + 0 * 4 + 0] * model->radius;
+        GLfloat ca_y = verts[tbase + 0 * 4 + 1] * model->radius;
+        GLfloat ca_z = verts[tbase + 0 * 4 + 2] * model->radius;
+
+        GLfloat cb_x = verts[tbase + 1 * 4 + 0] * model->radius;
+        GLfloat cb_y = verts[tbase + 1 * 4 + 1] * model->radius;
+        GLfloat cb_z = verts[tbase + 1 * 4 + 2] * model->radius;
+
+        GLfloat cc_x = verts[tbase + 2 * 4 + 0] * model->radius;
+        GLfloat cc_y = verts[tbase + 2 * 4 + 1] * model->radius;
+        GLfloat cc_z = verts[tbase + 2 * 4 + 2] * model->radius;
 
         GLfloat pos_a[4] = {ca_x, ca_y, ca_z, 1.0f};
         GLfloat pos_b[4] = {cb_x, cb_y, cb_z, 1.0f};
@@ -769,11 +765,21 @@ bool cube_intersects(GLfloat x, GLfloat y, GLfloat z, CubeModel const *model,
         mat_apply_left<4>(cam_mat, pos_b);
         mat_apply_left<4>(cam_mat, pos_c);
 
-        if (triangle_intersects(x, y, z, pos_a, pos_b, pos_c)) {
-            return true;
+        GLfloat tri_ix[3] = {};
+        if (triangle_intersects(x, y, z, pos_a, pos_b, pos_c, tri_ix)) {
+            GLfloat lensq = veclen<3>(tri_ix);
+            if (lensq < nearest_dist) {
+                nearest_dist = lensq;
+                nearest_face = ca_face;
+            }
+            found = true;
         }
     }
-    return false;
+
+    if (found) {
+        *face = nearest_face;
+    }
+    return found;
 }
 
 int main() {
@@ -899,9 +905,20 @@ int main() {
                     set_cube_obj_matrix(model, x, y, z, obj_mat);
                     fill_cube_tex_colors(model, x, y, z, colors);
 
+                    GLfloat nearest_face;
+                    bool intersects = cube_intersects(near_x, near_y, near_z,
+                                                      model, obj_mat, cam_mat,
+                                                      &nearest_face);
+
                     glUseProgram(program.prog);
                     glBindVertexArray(program.vao);
                     glActiveTexture((GL_TEXTURE0) + index);
+
+                    if (intersects) {
+                        glUniform1f(program.info.ix_face_loc, nearest_face);
+                    } else {
+                        glUniform1f(program.info.ix_face_loc, -1.0f);
+                    }
 
                     // TODO(bhester): consider using glUinform
                     glUniformMatrix4fv(program.info.cam_loc, 1, GL_TRUE, cam_mat);
