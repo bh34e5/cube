@@ -173,7 +173,7 @@ void init_cube(CubeModel *cube) {
     }
 }
 
-char const *vert_shader_text = R"""(
+char const *vert_shader_text = R"(
 #version 330 core
 
 in vec3 pos;
@@ -193,9 +193,9 @@ void main() {
     tex_ind_v = tex_ind;
     gl_Position = perspective * camera * object * pos_hom;
 }
-)""";
+)";
 
-char const *frag_shader_text = R"""(
+char const *frag_shader_text = R"(
 #version 330 core
 
 in vec3 pos_v;
@@ -220,7 +220,7 @@ void main() {
         ? vec4(0.2, 0.2, 0.2, 1.0)
         : texture(face_colors, (tex_ind_v + 0.5) / 6.0);
 }
-)""";
+)";
 
 struct Camera {
     GLfloat tx, ty, tz;
@@ -258,6 +258,44 @@ void mat_mult_left(GLfloat lhs[16], GLfloat rhs[16]) {
     mat_mult(lhs, rhs, res);
 
     memmove(rhs, res, sizeof(res));
+}
+
+template <GLuint N>
+inline GLfloat row_apply(GLfloat lhs[N * N], GLfloat rhs[N], GLuint r) {
+    GLfloat val = 0.0f;
+    for (GLuint i = 0; i < N; ++i) {
+        val += lhs[r * N + i] * rhs[i];
+    }
+    return val;
+}
+
+template <GLuint N>
+void mat_apply(GLfloat lhs[N * N], GLfloat rhs[N], GLfloat res[N]) {
+    for (GLuint r = 0; r < N; ++r) {
+        res[r] = row_apply<N>(lhs, rhs, r);
+    }
+}
+
+template <GLuint N>
+void mat_apply_left(GLfloat lhs[N * N], GLfloat rhs[N]) {
+    GLfloat res[N];
+    mat_apply<N>(lhs, rhs, res);
+
+    memmove(rhs, res, sizeof(res));
+}
+
+template <GLuint N>
+inline GLfloat vecdot(GLfloat lhs[N], GLfloat rhs[N]) {
+    GLfloat res = 0.0f;
+    for (GLuint i = 0; i < N; ++i) {
+        res += lhs[i] * rhs[i];
+    }
+    return res;
+}
+
+template <GLuint N>
+inline GLfloat veclen(GLfloat vec[N]) {
+    return vecdot<N>(vec, vec);
 }
 
 void get_camera(GLfloat camera[16], Camera const *cam) {
@@ -579,6 +617,165 @@ void cleanup_cube_program(CubeProgram cube_program) {
     glDeleteProgram(cube_program.prog);
 }
 
+bool triangle_intersects(GLfloat x, GLfloat y, GLfloat z, GLfloat a[3],
+                         GLfloat b[3], GLfloat c[3]) {
+    // We have a ray from the origin, and a plane in space. If the plane went
+    // through the origin as well, then the intersection point would be the
+    // origin. We can define the plane with (a) and the normal of the plane
+    // N = (b-a) x (c-a). We see that the vector a shifts the plane by some
+    // amount in the direction of N (a . N / |N|). Additionally, (x,y,z) has
+    // some component in the direction of N, and we can find that similarly as
+    // ((x,y,z) . N / |N|). Then for an intersection, we would have (x,y,z) * t
+    // on the plane, which means the distance in the normal direction would be
+    // the same as (a), so we have t = (a . N) / ((x,y,z) . N)
+    //
+    // Now that we have a point on the plane, we need to see if it's in the
+    // triangle. We want to find the components of (b-a) and (c-a) in
+    // (intersection-a) The following matrix maps e_1 to b-a, e_2 to c-a, and
+    // e_3 to their cross product. So if we take the inverse of this, and then
+    // apply it to the intersection point, we should find the component we want.
+    // [ (b-a)_x  (c-a)_x  cross_x ]
+    // [ (b-a)_y  (c-a)_y  cross_y ]
+    // [ (b-a)_z  (c-a)_z  cross_z ]
+    // Using the formula A * adj(A) = det(A) * I, we need to find the adjugate
+    // matrix and the determinant to get the inverse. The determinant appears to
+    // just be the length of the cross product vector for some reason.
+
+    GLfloat ray[3] = {x, y, z};
+
+    GLfloat ba[3] = {
+        b[0] - a[0],
+        b[1] - a[1],
+        b[2] - a[2],
+    };
+
+    GLfloat ca[3] = {
+        c[0] - a[0],
+        c[1] - a[1],
+        c[2] - a[2],
+    };
+
+    GLfloat cross[3] = {
+        +(ba[1] * ca[2] - ba[2] * ca[1]),
+        -(ba[0] * ca[2] - ba[2] * ca[0]),
+        +(ba[0] * ca[1] - ba[1] * ca[0]),
+    };
+
+    GLfloat det = veclen<3>(cross);
+    if (det < 1e-3) {
+        // singular matrix, we have a degenerate triangle
+        return false;
+    }
+
+    GLfloat det_inv = 1.0f / det;
+    GLfloat inv[9] = {
+        +det_inv * (ca[1] * cross[2] - ca[2] * cross[1]),
+        -det_inv * (ca[0] * cross[2] - ca[2] * cross[0]),
+        +det_inv * (ca[0] * cross[1] - ca[1] * cross[0]),
+
+        -det_inv * (ba[1] * cross[2] - ba[2] * cross[1]),
+        +det_inv * (ba[0] * cross[2] - ba[2] * cross[0]),
+        -det_inv * (ba[0] * cross[1] - ba[1] * cross[0]),
+
+        +det_inv * (ba[1] * ca[2] - ba[2] * ca[1]),
+        -det_inv * (ba[0] * ca[2] - ba[2] * ca[0]),
+        +det_inv * (ba[0] * ca[1] - ba[1] * ca[0]),
+    };
+
+    GLfloat a_cross = vecdot<3>(a, cross);
+    GLfloat xyz_cross = vecdot<3>(ray, cross);
+
+    if (xyz_cross < 1e-3) {
+        // pretty sure there is no way for this to be intersecting?
+        return false;
+    }
+
+    GLfloat t = a_cross / xyz_cross;
+    if (t < 0) {
+        return false;
+    }
+
+    GLfloat ix_adjusted[3] = {x * t - a[0], y * t - a[1], z * t - a[2]};
+    GLfloat components[3] = {};
+
+    mat_apply<3>(inv, ix_adjusted, components);
+
+    GLfloat x_comp = components[0];
+    GLfloat y_comp = components[1];
+    if (x_comp > 0 && y_comp > 0 && ((x_comp + y_comp) <= 1.0f)) {
+        return true;
+    }
+    return false;
+}
+
+// Tests whether a ray given by (x, y, z) intersects with the given cube
+bool cube_intersects(GLfloat x, GLfloat y, GLfloat z, CubeModel const *model,
+                     GLfloat obj_mat[16], GLfloat cam_mat[16]) {
+    GLfloat corners[8 * 3] = {
+        -1.0f, -1.0f, -1.0f,
+        -1.0f, -1.0f, +1.0f,
+        -1.0f, +1.0f, -1.0f,
+        -1.0f, +1.0f, +1.0f,
+        +1.0f, -1.0f, -1.0f,
+        +1.0f, -1.0f, +1.0f,
+        +1.0f, +1.0f, -1.0f,
+        +1.0f, +1.0f, +1.0f,
+    };
+
+    GLint indices[] = {
+        0, 2, 6,
+        0, 6, 4,
+        4, 6, 7,
+        4, 7, 5,
+        6, 2, 3,
+        6, 3, 7,
+        2, 0, 1,
+        2, 1, 3,
+        0, 4, 5,
+        0, 5, 1,
+        5, 7, 3,
+        5, 3, 1,
+    };
+
+    GLuint index_count = sizeof(indices) / sizeof(*indices);
+    GLuint triangle_count = index_count / 3;
+
+    for (GLuint t = 0; t < triangle_count; ++t) {
+        GLuint ca = indices[t * 3 + 0];
+        GLuint cb = indices[t * 3 + 1];
+        GLuint cc = indices[t * 3 + 2];
+
+        GLfloat ca_x = corners[ca * 3 + 0] * model->radius;
+        GLfloat ca_y = corners[ca * 3 + 1] * model->radius;
+        GLfloat ca_z = corners[ca * 3 + 2] * model->radius;
+
+        GLfloat cb_x = corners[cb * 3 + 0] * model->radius;
+        GLfloat cb_y = corners[cb * 3 + 1] * model->radius;
+        GLfloat cb_z = corners[cb * 3 + 2] * model->radius;
+
+        GLfloat cc_x = corners[cc * 3 + 0] * model->radius;
+        GLfloat cc_y = corners[cc * 3 + 1] * model->radius;
+        GLfloat cc_z = corners[cc * 3 + 2] * model->radius;
+
+        GLfloat pos_a[4] = {ca_x, ca_y, ca_z, 1.0f};
+        GLfloat pos_b[4] = {cb_x, cb_y, cb_z, 1.0f};
+        GLfloat pos_c[4] = {cc_x, cc_y, cc_z, 1.0f};
+
+        mat_apply_left<4>(obj_mat, pos_a);
+        mat_apply_left<4>(obj_mat, pos_b);
+        mat_apply_left<4>(obj_mat, pos_c);
+
+        mat_apply_left<4>(cam_mat, pos_a);
+        mat_apply_left<4>(cam_mat, pos_b);
+        mat_apply_left<4>(cam_mat, pos_c);
+
+        if (triangle_intersects(x, y, z, pos_a, pos_b, pos_c)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int main() {
     glfwSetErrorCallback(&handle_error);
 
@@ -687,14 +884,13 @@ int main() {
 
         GLfloat near_x = screen_to_near_x(ctx->xpos, ctx->width, ctx->props);
         GLfloat near_y = screen_to_near_y(ctx->ypos, ctx->height, ctx->props);
-        if (glfwGetKey(window, GLFW_KEY_P)) {
-            printf("near_x = %f, near_y = %f\n", near_x, near_y);
-        }
+        GLfloat near_z = -ctx->props.near;
 
         for (int x = 0; x < 3; ++x) {
             for (int y = 0; y < 3; ++y) {
                 for (int z = 0; z < 3; ++z) {
                     int index = 3 * (3 * (x) + y) + z;
+
                     CubeProgram program = programs[index];
 
                     GLfloat obj_mat[16] = {};
