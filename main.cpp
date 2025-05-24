@@ -139,8 +139,11 @@ struct MouseState {
     bool indices_saved;
     GLint cube_idx;
     GLfloat face_idx;
-    GLfloat map_axis_1[3];
-    GLfloat map_axis_2[3];
+    GLfloat map_axis_1[4];
+    GLfloat map_axis_2[4];
+    GLfloat last_xrot;
+    GLfloat last_yrot;
+    GLfloat last_zrot;
 };
 
 struct Context {
@@ -163,16 +166,19 @@ void init_context(Context *ctx, int width, int height) {
             .height = GLfloat(d_height * PIX_TO_SCREEN),
         },
         .mouse = {
-            .xpos = 0.0f,
-            .ypos = 0.0f,
+            .xpos = {},
+            .ypos = {},
             .down = false,
-            .down_x = 0.0f,
-            .down_y = 0.0f,
+            .down_x = {},
+            .down_y = {},
             .indices_saved = false,
             .cube_idx = -1,
             .face_idx = 1.0f,
             .map_axis_1 = {},
             .map_axis_2 = {},
+            .last_xrot = {},
+            .last_yrot = {},
+            .last_zrot = {},
         },
     };
 }
@@ -1139,17 +1145,20 @@ void main() {
             GLfloat inv_axis_2_len = 1.0f / veclen<3>(map_axis_2);
 
             SignedAxis drag_axis;
+            SignedAxis non_drag_axis;
             GLfloat sign_dir;
             GLfloat mag;
 
             if (fabsf(axis_1_dir * inv_axis_1_len) > fabsf(axis_2_dir * inv_axis_2_len)) {
                 // stronger in axis 1, so we drag in that direction
                 drag_axis = get_drag_axis_1(ctx->mouse.face_idx);
+                non_drag_axis = get_drag_axis_2(ctx->mouse.face_idx);
                 sign_dir = sgnf(axis_1_dir);
                 mag = veclen<3>(clip_diff) * inv_axis_1_len;
             } else {
                 // stronger in axis 2, so we drag in that direction
                 drag_axis = get_drag_axis_2(ctx->mouse.face_idx);
+                non_drag_axis = get_drag_axis_1(ctx->mouse.face_idx);
                 sign_dir = sgnf(axis_2_dir);
                 mag = veclen<3>(clip_diff) * inv_axis_2_len;
 
@@ -1157,17 +1166,30 @@ void main() {
 
             SignedAxis face_normal = get_normal(ctx->mouse.face_idx);
             SignedAxis rot_axis = axis_cross(face_normal, drag_axis);
-
-            GLfloat *model_rot;
-            GLuint model_ind;
-            switch (rot_axis.axis) {
-            case X: { model_rot = model->xrot; model_ind = x; } break;
-            case Y: { model_rot = model->yrot; model_ind = y; } break;
-            case Z: { model_rot = model->zrot; model_ind = z; } break;
-            }
+            SignedAxis non_rot_axis = axis_cross(face_normal, non_drag_axis);
 
             GLfloat sign_rot = rot_axis.neg ? -1.0f : 1.0f;
-            model_rot[model_ind] += sign_rot * sign_dir * mag;
+
+            GLuint ind_rot;
+            GLfloat *arr_rot;
+            GLfloat last_rot;
+            switch (rot_axis.axis) {
+            case X: { ind_rot = x; arr_rot = model->xrot; last_rot = ctx->mouse.last_xrot; } break;
+            case Y: { ind_rot = y; arr_rot = model->yrot; last_rot = ctx->mouse.last_yrot; } break;
+            case Z: { ind_rot = z; arr_rot = model->zrot; last_rot = ctx->mouse.last_zrot; } break;
+            }
+
+            GLuint ind_non_rot;
+            GLfloat *arr_non_rot;
+            GLfloat last_non_rot;
+            switch (non_rot_axis.axis) {
+            case X: { ind_non_rot = x; arr_non_rot = model->xrot; last_non_rot = ctx->mouse.last_xrot; } break;
+            case Y: { ind_non_rot = y; arr_non_rot = model->yrot; last_non_rot = ctx->mouse.last_yrot; } break;
+            case Z: { ind_non_rot = z; arr_non_rot = model->zrot; last_non_rot = ctx->mouse.last_zrot; } break;
+            }
+
+            arr_rot[ind_rot] = last_rot + sign_rot * sign_dir * mag;
+            arr_non_rot[ind_non_rot] = last_non_rot;
         }
 
         for (int x = 0; x < 3; ++x) {
@@ -1221,13 +1243,17 @@ void main() {
             }
         }
 
-        if (ctx->mouse.down && !ctx->mouse.indices_saved) {
-            ctx->mouse.cube_idx = intersection_cube;
-            ctx->mouse.face_idx = nearest_face;
-
+        if (intersection_cube >= 0 && ctx->mouse.down && !ctx->mouse.indices_saved) {
             GLuint x = (intersection_cube / 9) % 3;
             GLuint y = (intersection_cube / 3) % 3;
             GLuint z = (intersection_cube / 1) % 3;
+
+            ctx->mouse.cube_idx = intersection_cube;
+            ctx->mouse.face_idx = nearest_face;
+
+            ctx->mouse.last_xrot = model->xrot[x];
+            ctx->mouse.last_yrot = model->yrot[y];
+            ctx->mouse.last_zrot = model->zrot[x];
 
             GLfloat obj_mat[16] = {};
             set_cube_obj_matrix(model, x, y, z, obj_mat);
