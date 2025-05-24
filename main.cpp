@@ -17,6 +17,113 @@
 #define FACE_COUNT (6)
 #define TRIANGLE_VERT_COUNT (FACE_COUNT * (2 * 3))
 
+char const *vert_shader_text = R"(
+#version 330 core
+
+in vec3 pos;
+in float tex_ind;
+
+out vec3 pos_v;
+out float tex_ind_v;
+
+uniform mat4 object;
+uniform mat4 camera;
+uniform mat4 perspective;
+
+void main() {
+    vec4 pos_hom = vec4(pos, 1.0);
+
+    pos_v = pos;
+    tex_ind_v = tex_ind;
+    gl_Position = perspective * camera * object * pos_hom;
+}
+)";
+
+char const *frag_shader_text = R"(
+#version 330 core
+
+in vec3 pos_v;
+in float tex_ind_v;
+out vec4 color_out;
+
+uniform sampler1D face_colors;
+uniform float intersection_face;
+
+void main() {
+    vec3 mapped = (pos_v + 1.0) * 0.5;
+
+    int c = 0;
+
+    float cube_radius = (1.0 / 7.0); // FIXME(bhester): get cube radius from uniform
+    float check_val = cube_radius * 0.8;
+
+    if (abs(pos_v.x) > check_val) ++c;
+    if (abs(pos_v.y) > check_val) ++c;
+    if (abs(pos_v.z) > check_val) ++c;
+
+    color_out = (c > 1)
+        ? vec4(0.2, 0.2, 0.2, 1.0)
+        : texture(face_colors, (tex_ind_v + 0.5) / 6.0);
+
+    if (intersection_face >= -1e-3 && abs(tex_ind_v - intersection_face) < 1e-3) {
+        // dim the intersected face
+        color_out.rgb = 0.6 * color_out.rgb;
+    }
+}
+)";
+
+GLuint compile_shader(GLenum type, char const *text) {
+    GLuint shader = glCreateShader(type);
+
+    glShaderSource(shader, 1, &text, nullptr);
+    glCompileShader(shader);
+
+    GLint status = GL_FALSE;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
+
+    if (status != GL_TRUE) {
+        GLint len = 0;
+        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &len);
+
+        char *log = new char[len];
+        glGetShaderInfoLog(shader, len, nullptr, log);
+        fprintf(stderr, "Shader Log: %.*s\n", len, log);
+    }
+    assert(status == GL_TRUE);
+
+    return shader;
+}
+
+GLuint compile_link_program(char const *vert, char const *frag) {
+    GLuint program = glCreateProgram();
+
+    GLuint vert_shader = compile_shader(GL_VERTEX_SHADER, vert);
+    GLuint frag_shader = compile_shader(GL_FRAGMENT_SHADER, frag);
+
+    glAttachShader(program, vert_shader);
+    glAttachShader(program, frag_shader);
+
+    glLinkProgram(program);
+
+    GLint status = GL_FALSE;
+    glGetProgramiv(program, GL_LINK_STATUS, &status);
+
+    if (status != GL_TRUE) {
+        GLint len = 0;
+        glGetProgramiv(program, GL_INFO_LOG_LENGTH, &len);
+
+        char *log = new char[len];
+        glGetProgramInfoLog(program, len, nullptr, log);
+        fprintf(stderr, "Program Log: %.*s\n", len, log);
+    }
+    assert(status == GL_TRUE);
+
+    glDeleteShader(vert_shader);
+    glDeleteShader(frag_shader);
+
+    return program;
+}
+
 inline GLfloat sgnf(GLfloat f) {
     if (f < 0) return -1.0f;
     if (f > 0) return +1.0f;
@@ -61,7 +168,80 @@ inline SignedAxis axis_cross(SignedAxis lhs, SignedAxis rhs) {
     unreachable;
 }
 
-GLfloat const verts[TRIANGLE_VERT_COUNT * 4] = {
+template <GLuint N>
+inline GLfloat vecdot(GLfloat const lhs[N], GLfloat const rhs[N]) {
+    GLfloat res = 0.0f;
+    for (GLuint i = 0; i < N; ++i) {
+        res += lhs[i] * rhs[i];
+    }
+    return res;
+}
+
+template <GLuint N>
+inline GLfloat veclen(GLfloat const vec[N]) {
+    return vecdot<N>(vec, vec);
+}
+
+inline void set_identity(GLfloat mat[16]) {
+    static GLfloat identity[16] = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f,
+    };
+    memmove(mat, identity, sizeof(identity));
+}
+
+inline GLfloat row_mult(GLfloat const lhs[16], GLfloat const rhs[16], GLuint r,
+                        GLuint c) {
+    GLfloat val = 0.0f;
+    for (GLuint i = 0; i < 4; ++i) {
+        val += lhs[r * 4 + i] * rhs[i * 4 + c];
+    }
+    return val;
+}
+
+void mat_mult(GLfloat const lhs[16], GLfloat const rhs[16], GLfloat res[16]) {
+    for (GLuint r = 0; r < 4; ++r) {
+        for (GLuint c = 0 ; c < 4; ++c) {
+            res[r * 4 + c] = row_mult(lhs, rhs, r, c);
+        }
+    }
+}
+
+void mat_mult_left(GLfloat const lhs[16], GLfloat rhs[16]) {
+    GLfloat res[16];
+    mat_mult(lhs, rhs, res);
+
+    memmove(rhs, res, sizeof(res));
+}
+
+template <GLuint N>
+inline GLfloat row_apply(GLfloat const lhs[N * N], GLfloat const rhs[N],
+                         GLuint res) {
+    GLfloat val = 0.0f;
+    for (GLuint i = 0; i < N; ++i) {
+        val += lhs[res * N + i] * rhs[i];
+    }
+    return val;
+}
+
+template <GLuint N>
+void mat_apply(GLfloat lhs[N * N], GLfloat rhs[N], GLfloat res[N]) {
+    for (GLuint r = 0; r < N; ++r) {
+        res[r] = row_apply<N>(lhs, rhs, r);
+    }
+}
+
+template <GLuint N>
+void mat_apply_left(GLfloat lhs[N * N], GLfloat rhs[N]) {
+    GLfloat res[N];
+    mat_apply<N>(lhs, rhs, res);
+
+    memmove(rhs, res, sizeof(res));
+}
+
+static GLfloat const verts[TRIANGLE_VERT_COUNT * 4] = {
     -1.0f, -1.0f, -1.0f, 0.0f,
     -1.0f, +1.0f, -1.0f, 0.0f,
     +1.0f, +1.0f, -1.0f, 0.0f,
@@ -141,9 +321,7 @@ struct MouseState {
     GLfloat face_idx;
     GLfloat map_axis_1[4];
     GLfloat map_axis_2[4];
-    GLfloat last_xrot;
-    GLfloat last_yrot;
-    GLfloat last_zrot;
+    GLfloat last_rot[16];
 };
 
 struct Context {
@@ -176,9 +354,7 @@ void init_context(Context *ctx, int width, int height) {
             .face_idx = 1.0f,
             .map_axis_1 = {},
             .map_axis_2 = {},
-            .last_xrot = {},
-            .last_yrot = {},
-            .last_zrot = {},
+            .last_rot = {},
         },
     };
 }
@@ -233,53 +409,6 @@ GLFWframebuffersizefun handle_framebuffer_size = &_handle_framebuffer_size;
 GLFWcursorposfun handle_cursor_pos = &_handle_cursor_pos;
 GLFWmousebuttonfun handle_mouse_button = &_handle_mouse_button;
 
-enum Face {
-    YELLOW = 0,
-    RED    = 1,
-    BLUE   = 2,
-    ORANGE = 3,
-    GREEN  = 4,
-    WHITE  = 5,
-};
-
-inline GLuint face_idx(Face face) {
-    assert(face >= YELLOW && face <= WHITE);
-    switch (face) {
-    case YELLOW: return 0;
-    case RED:    return 1;
-    case BLUE:   return 2;
-    case ORANGE: return 3;
-    case GREEN:  return 4;
-    case WHITE:  return 5;
-    }
-
-    unreachable;
-}
-
-struct FaceIter {
-    bool done;
-    Face face;
-};
-
-inline FaceIter begin_iter_faces() {
-    return FaceIter{false, YELLOW};
-}
-
-inline FaceIter next_face(FaceIter cur) {
-    if (cur.done) return cur;
-
-    switch (cur.face) {
-    case YELLOW: return FaceIter{false, RED};
-    case RED:    return FaceIter{false, BLUE};
-    case BLUE:   return FaceIter{false, ORANGE};
-    case ORANGE: return FaceIter{false, GREEN};
-    case GREEN:  return FaceIter{false, WHITE};
-    case WHITE:  return FaceIter{true,  YELLOW};
-    }
-
-    unreachable;
-}
-
 SignedAxis get_normal(GLfloat face_idx) {
     GLint casted = GLint(face_idx);
     switch (casted) {
@@ -329,394 +458,6 @@ void fill_axis(SignedAxis axis, GLfloat vec[3]) {
     }
 }
 
-struct CubeModel {
-    Face faces[FACE_COUNT][3][3];
-
-    // will have to do some management of these to make sure we don't have
-    // physically incapable motions
-    GLfloat xrot[3];
-    GLfloat yrot[3];
-    GLfloat zrot[3];
-
-    GLfloat radius;
-};
-
-void init_cube(CubeModel *cube) {
-    FaceIter iter = begin_iter_faces();
-    while (!iter.done) {
-        GLuint idx = face_idx(iter.face);
-        for (GLuint r = 0; r < 3; ++r) {
-            for (GLuint c = 0; c < 3; ++c) {
-                cube->faces[idx][r][c] = iter.face;
-            }
-        }
-
-        iter = next_face(iter);
-    }
-}
-
-char const *vert_shader_text = R"(
-#version 330 core
-
-in vec3 pos;
-in float tex_ind;
-
-out vec3 pos_v;
-out float tex_ind_v;
-
-uniform mat4 object;
-uniform mat4 camera;
-uniform mat4 perspective;
-
-void main() {
-    vec4 pos_hom = vec4(pos, 1.0);
-
-    pos_v = pos;
-    tex_ind_v = tex_ind;
-    gl_Position = perspective * camera * object * pos_hom;
-}
-)";
-
-char const *frag_shader_text = R"(
-#version 330 core
-
-in vec3 pos_v;
-in float tex_ind_v;
-out vec4 color_out;
-
-uniform sampler1D face_colors;
-uniform float intersection_face;
-
-void main() {
-    vec3 mapped = (pos_v + 1.0) * 0.5;
-
-    int c = 0;
-
-    float cube_radius = (1.0 / 7.0); // FIXME(bhester): get cube radius from uniform
-    float check_val = cube_radius * 0.8;
-
-    if (abs(pos_v.x) > check_val) ++c;
-    if (abs(pos_v.y) > check_val) ++c;
-    if (abs(pos_v.z) > check_val) ++c;
-
-    color_out = (c > 1)
-        ? vec4(0.2, 0.2, 0.2, 1.0)
-        : texture(face_colors, (tex_ind_v + 0.5) / 6.0);
-
-    if (intersection_face >= -1e-3 && abs(tex_ind_v - intersection_face) < 1e-3) {
-        // dim the intersected face
-        color_out.rgb = 0.6 * color_out.rgb;
-    }
-}
-)";
-
-struct Camera {
-    GLfloat tx, ty, tz;
-    GLfloat rotx, roty, rotz;
-};
-
-inline void set_identity(GLfloat mat[16]) {
-    static GLfloat identity[16] = {
-        1.0f, 0.0f, 0.0f, 0.0f,
-        0.0f, 1.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, 0.0f,
-        0.0f, 0.0f, 0.0f, 1.0f,
-    };
-    memmove(mat, identity, sizeof(identity));
-}
-
-inline GLfloat row_mult(GLfloat lhs[16], GLfloat rhs[16], GLuint r, GLuint c) {
-    GLfloat val = 0.0f;
-    for (GLuint i = 0; i < 4; ++i) {
-        val += lhs[r * 4 + i] * rhs[i * 4 + c];
-    }
-    return val;
-}
-
-void mat_mult(GLfloat lhs[16], GLfloat rhs[16], GLfloat res[16]) {
-    for (GLuint r = 0; r < 4; ++r) {
-        for (GLuint c = 0 ; c < 4; ++c) {
-            res[r * 4 + c] = row_mult(lhs, rhs, r, c);
-        }
-    }
-}
-
-void mat_mult_left(GLfloat lhs[16], GLfloat rhs[16]) {
-    GLfloat res[16];
-    mat_mult(lhs, rhs, res);
-
-    memmove(rhs, res, sizeof(res));
-}
-
-template <GLuint N>
-inline GLfloat row_apply(GLfloat lhs[N * N], GLfloat rhs[N], GLuint r) {
-    GLfloat val = 0.0f;
-    for (GLuint i = 0; i < N; ++i) {
-        val += lhs[r * N + i] * rhs[i];
-    }
-    return val;
-}
-
-template <GLuint N>
-void mat_apply(GLfloat lhs[N * N], GLfloat rhs[N], GLfloat res[N]) {
-    for (GLuint r = 0; r < N; ++r) {
-        res[r] = row_apply<N>(lhs, rhs, r);
-    }
-}
-
-template <GLuint N>
-void mat_apply_left(GLfloat lhs[N * N], GLfloat rhs[N]) {
-    GLfloat res[N];
-    mat_apply<N>(lhs, rhs, res);
-
-    memmove(rhs, res, sizeof(res));
-}
-
-template <GLuint N>
-inline GLfloat vecdot(GLfloat lhs[N], GLfloat rhs[N]) {
-    GLfloat res = 0.0f;
-    for (GLuint i = 0; i < N; ++i) {
-        res += lhs[i] * rhs[i];
-    }
-    return res;
-}
-
-template <GLuint N>
-inline GLfloat veclen(GLfloat vec[N]) {
-    return vecdot<N>(vec, vec);
-}
-
-void get_camera(GLfloat camera[16], Camera const *cam) {
-    // init to identity
-    for (GLuint i = 0; i < 16; ++i) {
-        camera[i] = 0.0f;
-    }
-
-    camera[0 * 4 + 0] = 1.0f;
-    camera[1 * 4 + 1] = 1.0f;
-    camera[2 * 4 + 2] = 1.0f;
-    camera[3 * 4 + 3] = 1.0f;
-
-    // define matrices
-
-    GLfloat rotx_mat[16] = {
-        1.0f, 0.0f,             0.0f,              0.0f,
-        0.0f, cosf(-cam->rotx), -sinf(-cam->rotx), 0.0f,
-        0.0f, sinf(-cam->rotx), cosf(-cam->rotx),  0.0f,
-        0.0f, 0.0f,             0.0f,              1.0f,
-    };
-
-    GLfloat roty_mat[16] = {
-        cosf(-cam->roty),  0.0f, sinf(-cam->roty), 0.0f,
-        0.0f,              1.0f, 0.0f,             0.0f,
-        -sinf(-cam->roty), 0.0f, cosf(-cam->roty), 0.0f,
-        0.0f,              0.0f, 0.0f,             1.0f,
-    };
-
-    GLfloat rotz_mat[16] = {
-        cosf(-cam->rotz), -sinf(-cam->rotz), 0.0f, 0.0f,
-        sinf(-cam->rotz), cosf(-cam->rotz),  0.0f, 0.0f,
-        0.0f,             0.0f,              1.0f, 0.0f,
-        0.0f,             0.0f,              0.0f, 1.0f,
-    };
-
-    GLfloat translation_mat[16] = {
-        1.0f, 0.0f, 0.0f, -cam->tx,
-        0.0f, 1.0f, 0.0f, -cam->ty,
-        0.0f, 0.0f, 1.0f, -cam->tz,
-        0.0f, 0.0f, 0.0f, 1.0f,
-    };
-
-    // apply the matrix mults
-    mat_mult_left(translation_mat, camera);
-    mat_mult_left(rotz_mat, camera);
-    mat_mult_left(roty_mat, camera);
-    mat_mult_left(rotx_mat, camera);
-}
-
-GLuint compile_shader(GLenum type, char const *text) {
-    GLuint shader = glCreateShader(type);
-
-    glShaderSource(shader, 1, &text, nullptr);
-    glCompileShader(shader);
-
-    GLint status = GL_FALSE;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
-
-    if (status != GL_TRUE) {
-        GLint len = 0;
-        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &len);
-
-        char *log = new char[len];
-        glGetShaderInfoLog(shader, len, nullptr, log);
-        fprintf(stderr, "Shader Log: %.*s\n", len, log);
-    }
-    assert(status == GL_TRUE);
-
-    return shader;
-}
-
-GLuint compile_link_program(char const *vert, char const *frag) {
-    GLuint program = glCreateProgram();
-
-    GLuint vert_shader = compile_shader(GL_VERTEX_SHADER, vert);
-    GLuint frag_shader = compile_shader(GL_FRAGMENT_SHADER, frag);
-
-    glAttachShader(program, vert_shader);
-    glAttachShader(program, frag_shader);
-
-    glLinkProgram(program);
-
-    GLint status = GL_FALSE;
-    glGetProgramiv(program, GL_LINK_STATUS, &status);
-
-    if (status != GL_TRUE) {
-        GLint len = 0;
-        glGetProgramiv(program, GL_INFO_LOG_LENGTH, &len);
-
-        char *log = new char[len];
-        glGetProgramInfoLog(program, len, nullptr, log);
-        fprintf(stderr, "Program Log: %.*s\n", len, log);
-    }
-    assert(status == GL_TRUE);
-
-    glDeleteShader(vert_shader);
-    glDeleteShader(frag_shader);
-
-    return program;
-}
-
-struct Vec3 {
-    GLfloat x, y, z;
-};
-
-void bind_cube_pos_data(GLfloat cube_radius, GLuint vbo) {
-    GLfloat scaled[TRIANGLE_VERT_COUNT * 4] = {};
-    memmove(scaled, verts, sizeof(verts));
-
-    for (GLuint i = 0; i < TRIANGLE_VERT_COUNT; ++i) {
-        scaled[i * 4 + 0] *= cube_radius;
-        scaled[i * 4 + 1] *= cube_radius;
-        scaled[i * 4 + 2] *= cube_radius;
-    }
-
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(scaled), scaled, GL_STATIC_DRAW);
-}
-
-void set_cube_obj_matrix(CubeModel const* model, int x, int y, int z,
-                             GLfloat mat[16]) {
-    GLfloat xrot = model->xrot[x];
-    GLfloat yrot = model->yrot[y];
-    GLfloat zrot = model->zrot[z];
-
-    GLfloat xrot_mat[16] = {
-        1.0f, 0.0f,       0.0f,        0.0f,
-        0.0f, cosf(xrot), -sinf(xrot), 0.0f,
-        0.0f, sinf(xrot), cosf(xrot),  0.0f,
-        0.0f, 0.0f,       0.0f,        1.0f,
-    };
-
-    GLfloat yrot_mat[16] = {
-        cosf(yrot),  0.0f, sinf(yrot), 0.0f,
-        0.0f,        1.0f, 0.0f,       0.0f,
-        -sinf(yrot), 0.0f, cosf(yrot), 0.0f,
-        0.0f,        0.0f, 0.0f,       1.0f,
-    };
-
-    GLfloat zrot_mat[16] = {
-        cosf(zrot), -sinf(zrot), 0.0f, 0.0f,
-        sinf(zrot), cosf(zrot),  0.0f, 0.0f,
-        0.0f,       0.0f,        1.0f, 0.0f,
-        0.0f,       0.0f,        0.0f, 1.0f,
-    };
-
-    GLfloat translation_mat[16] = {
-        1.0f, 0.0f, 0.0f, (GLfloat(x) - 1.0f) * 2.0f * model->radius,
-        0.0f, 1.0f, 0.0f, (GLfloat(y) - 1.0f) * 2.0f * model->radius,
-        0.0f, 0.0f, 1.0f, (GLfloat(z) - 1.0f) * 2.0f * model->radius,
-        0.0f, 0.0f, 0.0f, 1.0f,
-    };
-
-    set_identity(mat);
-    mat_mult_left(translation_mat, mat);
-    mat_mult_left(xrot_mat, mat);
-    mat_mult_left(yrot_mat, mat);
-    mat_mult_left(zrot_mat, mat);
-}
-
-void set_color(GLubyte dest[3], Face face) {
-    switch (face) {
-    case YELLOW: {dest[0] = 0xFF; dest[1] = 0xFF; dest[2] = 0x00;} break;
-    case RED:    {dest[0] = 0xFF; dest[1] = 0x00; dest[2] = 0x00;} break;
-    case BLUE:   {dest[0] = 0x00; dest[1] = 0x00; dest[2] = 0xFF;} break;
-    case ORANGE: {dest[0] = 0xFF; dest[1] = 0xA5; dest[2] = 0x00;} break;
-    case GREEN:  {dest[0] = 0x00; dest[1] = 0xFF; dest[2] = 0x00;} break;
-    case WHITE:  {dest[0] = 0xFF; dest[1] = 0xFF; dest[2] = 0xFF;} break;
-    default:
-        unreachable;
-    }
-}
-
-void fill_cube_tex_colors(CubeModel const *model, GLuint x, GLuint y, GLuint z,
-                          GLubyte colors[6 * 3]) {
-    switch (x) {
-    case 0: {
-        set_color(&colors[3 * 3], model->faces[3][y][z]);
-    } break;
-    case 1: {} break; // do nothing
-    case 2: {
-        set_color(&colors[1 * 3], model->faces[1][y][z]);
-    } break;
-    default:
-        unreachable;
-    }
-
-    switch (y) {
-    case 0: {
-        set_color(&colors[4 * 3], model->faces[4][z][x]);
-    } break;
-    case 1: {} break; // do nothing
-    case 2: {
-        set_color(&colors[2 * 3], model->faces[2][z][x]);
-    } break;
-    default:
-        unreachable;
-    }
-
-    switch (z) {
-    case 0: {
-        set_color(&colors[0 * 3], model->faces[0][x][y]);
-    } break;
-    case 1: {} break; // do nothing
-    case 2: {
-        set_color(&colors[5 * 3], model->faces[5][x][y]);
-    } break;
-    default:
-        unreachable;
-    }
-}
-
-inline GLfloat screen_to_near_x(double x, double screen_width,
-                                PerspectiveProps props) {
-    return GLfloat((x / screen_width - 0.5) * props.width);
-}
-
-inline GLfloat screen_to_near_y(double y, double screen_height,
-                                PerspectiveProps props) {
-    double inv_y = screen_height - y;
-    return GLfloat((inv_y / screen_height - 0.5) * props.height);
-}
-
-inline GLfloat screen_to_clip_x(double x, double screen_width) {
-    return GLfloat(x / screen_width * 2.0 - 1.0);
-}
-
-inline GLfloat screen_to_clip_y(double y, double screen_height) {
-    double inv_y = screen_height - y;
-    return GLfloat(inv_y / screen_height * 2.0 - 1.0);
-}
-
 struct CubeProgramInfo {
     // uniforms
     GLint obj_loc;     // the cube's object matrix
@@ -738,6 +479,41 @@ struct CubeProgram {
     GLuint vbo;
     GLuint texture;
 };
+
+struct CubePart {
+    GLubyte colors[6][3];
+    CubeProgram program;
+
+    GLfloat tx_mat[16];
+    GLfloat rx_mat[16];
+};
+
+struct CubeModel {
+    CubePart parts[27];
+    GLfloat radius;
+};
+
+enum Color {
+    YELLOW = 0,
+    RED    = 1,
+    BLUE   = 2,
+    ORANGE = 3,
+    GREEN  = 4,
+    WHITE  = 5,
+};
+
+void set_color(GLubyte dest[3], Color face) {
+    switch (face) {
+    case YELLOW: {dest[0] = 0xFF; dest[1] = 0xFF; dest[2] = 0x00;} break;
+    case RED:    {dest[0] = 0xFF; dest[1] = 0x00; dest[2] = 0x00;} break;
+    case BLUE:   {dest[0] = 0x00; dest[1] = 0x00; dest[2] = 0xFF;} break;
+    case ORANGE: {dest[0] = 0xFF; dest[1] = 0xA5; dest[2] = 0x00;} break;
+    case GREEN:  {dest[0] = 0x00; dest[1] = 0xFF; dest[2] = 0x00;} break;
+    case WHITE:  {dest[0] = 0xFF; dest[1] = 0xFF; dest[2] = 0xFF;} break;
+    default:
+        unreachable;
+    }
+}
 
 CubeProgram get_cube_program() {
     GLuint vao = 0;
@@ -775,6 +551,187 @@ void cleanup_cube_program(CubeProgram cube_program) {
     glDeleteBuffers(1, &cube_program.vbo);
     glDeleteVertexArrays(1, &cube_program.vao);
     glDeleteProgram(cube_program.prog);
+}
+
+void init_cube_part(CubePart *part, GLuint x, GLuint y, GLuint z,
+                    GLfloat radius) {
+    GLfloat translation_mat[16] = {
+        1.0f, 0.0f, 0.0f, (GLfloat(x) - 1.0f) * 2.0f * radius,
+        0.0f, 1.0f, 0.0f, (GLfloat(y) - 1.0f) * 2.0f * radius,
+        0.0f, 0.0f, 1.0f, (GLfloat(z) - 1.0f) * 2.0f * radius,
+        0.0f, 0.0f, 0.0f, 1.0f,
+    };
+
+    switch (x) {
+    case 0: {
+        set_color(part->colors[3], Color::ORANGE);
+    } break;
+    case 1: {} break; // do nothing
+    case 2: {
+        set_color(part->colors[1], Color::RED);
+    } break;
+    default:
+        unreachable;
+    }
+
+    switch (y) {
+    case 0: {
+        set_color(part->colors[4], Color::GREEN);
+    } break;
+    case 1: {} break; // do nothing
+    case 2: {
+        set_color(part->colors[2], Color::BLUE);
+    } break;
+    default:
+        unreachable;
+    }
+
+    switch (z) {
+    case 0: {
+        set_color(part->colors[0], Color::YELLOW);
+    } break;
+    case 1: {} break; // do nothing
+    case 2: {
+        set_color(part->colors[5], Color::WHITE);
+    } break;
+    default:
+        unreachable;
+    }
+
+    part->program = get_cube_program();
+    memmove(part->tx_mat, translation_mat, sizeof(translation_mat));
+    set_identity(part->rx_mat);
+}
+
+void init_cube(CubeModel *model) {
+    for (GLuint x = 0; x < 3; ++x) {
+        for (GLuint y = 0; y < 3; ++y) {
+            for (GLuint z = 0; z < 3; ++z) {
+                GLuint idx = 3 * 3 * x + 3 * y + z;
+                init_cube_part(model->parts + idx, x, y, z, model->radius);
+            }
+        }
+    }
+}
+
+void rotate_in_x(GLfloat mat[16], GLfloat delta) {
+    GLfloat rotx_mat[16] = {
+        1.0f, 0.0f,        0.0f,         0.0f,
+        0.0f, cosf(delta), -sinf(delta), 0.0f,
+        0.0f, sinf(delta), cosf(delta),  0.0f,
+        0.0f, 0.0f,        0.0f,         1.0f,
+    };
+
+    mat_mult_left(mat, rotx_mat);
+    memmove(mat, rotx_mat, sizeof(rotx_mat));
+}
+
+void rotate_in_y(GLfloat mat[16], GLfloat delta) {
+    GLfloat roty_mat[16] = {
+        cosf(delta),  0.0f, sinf(delta), 0.0f,
+        0.0f,         1.0f, 0.0f,        0.0f,
+        -sinf(delta), 0.0f, cosf(delta), 0.0f,
+        0.0f,         0.0f, 0.0f,        1.0f,
+    };
+
+    mat_mult_left(mat, roty_mat);
+    memmove(mat, roty_mat, sizeof(roty_mat));
+}
+
+void rotate_in_z(GLfloat mat[16], GLfloat delta) {
+    GLfloat rotz_mat[16] = {
+        cosf(delta), -sinf(delta), 0.0f, 0.0f,
+        sinf(delta), cosf(delta),  0.0f, 0.0f,
+        0.0f,        0.0f,         1.0f, 0.0f,
+        0.0f,        0.0f,         0.0f, 1.0f,
+    };
+
+    mat_mult_left(mat, rotz_mat);
+    memmove(mat, rotz_mat, sizeof(rotz_mat));
+}
+
+struct Camera {
+    GLfloat tx, ty, tz;
+    GLfloat rotx, roty, rotz;
+};
+
+void get_camera(GLfloat camera[16], Camera const *cam) {
+    // define matrices
+    GLfloat rotx_mat[16] = {
+        1.0f, 0.0f,             0.0f,              0.0f,
+        0.0f, cosf(-cam->rotx), -sinf(-cam->rotx), 0.0f,
+        0.0f, sinf(-cam->rotx), cosf(-cam->rotx),  0.0f,
+        0.0f, 0.0f,             0.0f,              1.0f,
+    };
+
+    GLfloat roty_mat[16] = {
+        cosf(-cam->roty),  0.0f, sinf(-cam->roty), 0.0f,
+        0.0f,              1.0f, 0.0f,             0.0f,
+        -sinf(-cam->roty), 0.0f, cosf(-cam->roty), 0.0f,
+        0.0f,              0.0f, 0.0f,             1.0f,
+    };
+
+    GLfloat rotz_mat[16] = {
+        cosf(-cam->rotz), -sinf(-cam->rotz), 0.0f, 0.0f,
+        sinf(-cam->rotz), cosf(-cam->rotz),  0.0f, 0.0f,
+        0.0f,             0.0f,              1.0f, 0.0f,
+        0.0f,             0.0f,              0.0f, 1.0f,
+    };
+
+    GLfloat translation_mat[16] = {
+        1.0f, 0.0f, 0.0f, -cam->tx,
+        0.0f, 1.0f, 0.0f, -cam->ty,
+        0.0f, 0.0f, 1.0f, -cam->tz,
+        0.0f, 0.0f, 0.0f, 1.0f,
+    };
+
+    // apply the matrix mults
+    set_identity(camera);
+    mat_mult_left(translation_mat, camera);
+    mat_mult_left(rotz_mat, camera);
+    mat_mult_left(roty_mat, camera);
+    mat_mult_left(rotx_mat, camera);
+}
+
+void bind_cube_pos_data(GLfloat cube_radius, GLuint vbo) {
+    GLfloat scaled[TRIANGLE_VERT_COUNT * 4] = {};
+    memmove(scaled, verts, sizeof(verts));
+
+    for (GLuint i = 0; i < TRIANGLE_VERT_COUNT; ++i) {
+        scaled[i * 4 + 0] *= cube_radius;
+        scaled[i * 4 + 1] *= cube_radius;
+        scaled[i * 4 + 2] *= cube_radius;
+    }
+
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(scaled), scaled, GL_STATIC_DRAW);
+}
+
+void set_cube_obj_matrix(GLfloat const tx_mat[16], GLfloat const rx_mat[16],
+                         GLfloat mat[16]) {
+    set_identity(mat);
+    mat_mult_left(tx_mat, mat);
+    mat_mult_left(rx_mat, mat);
+}
+
+inline GLfloat screen_to_near_x(double x, double screen_width,
+                                PerspectiveProps props) {
+    return GLfloat((x / screen_width - 0.5) * props.width);
+}
+
+inline GLfloat screen_to_near_y(double y, double screen_height,
+                                PerspectiveProps props) {
+    double inv_y = screen_height - y;
+    return GLfloat((inv_y / screen_height - 0.5) * props.height);
+}
+
+inline GLfloat screen_to_clip_x(double x, double screen_width) {
+    return GLfloat(x / screen_width * 2.0 - 1.0);
+}
+
+inline GLfloat screen_to_clip_y(double y, double screen_height) {
+    double inv_y = screen_height - y;
+    return GLfloat(inv_y / screen_height * 2.0 - 1.0);
 }
 
 bool triangle_intersects(GLfloat x, GLfloat y, GLfloat z, GLfloat a[3],
@@ -975,7 +932,7 @@ int main() {
     assert(max_tex_image_units >= 27);
 
     GLfloat cube_radius = (1.0f / 7.0f);
-    CubeModel _model = {{}, {}, {}, {}, cube_radius};
+    CubeModel _model = {{}, cube_radius};
     CubeModel *model = &_model;
     init_cube(model);
 
@@ -994,11 +951,8 @@ int main() {
     GLfloat perspective_mat[16] = {};
     init_perspective_mat(ctx->props, perspective_mat);
 
-    CubeProgram programs[27] = {};
     for (GLuint i = 0; i < 27; ++i) {
-        CubeProgram *program = programs + i;
-
-        *program = get_cube_program();
+        CubeProgram *program = &model->parts[i].program;
 
         glUseProgram(program->prog);
         glBindVertexArray(program->vao);
@@ -1029,8 +983,6 @@ int main() {
 
     cam.tz = 16.0f;
     get_camera(cam_mat, &cam);
-
-    int idx = 0;
 
     double target_time = 1.0 / 16.0 ; // seconds per frame
     double cur_time = glfwGetTime();
@@ -1090,17 +1042,15 @@ void main() {
         GLint intersection_cube = -1;
 
         if (ctx->mouse.down && ctx->mouse.indices_saved) {
-            GLint cube_idx = ctx->mouse.cube_idx;
-            GLuint x = (cube_idx / 9) % 3;
-            GLuint y = (cube_idx / 3) % 3;
-            GLuint z = (cube_idx / 1) % 3;
+            CubePart *part = model->parts + ctx->mouse.cube_idx;
 
             GLfloat obj_mat[16] = {};
-            set_cube_obj_matrix(model, x, y, z, obj_mat);
+            set_cube_obj_matrix(part->tx_mat, ctx->mouse.last_rot, obj_mat);
 
             GLfloat clip_x = screen_to_clip_x(ctx->mouse.xpos, ctx->width);
-            GLfloat clip_y = screen_to_clip_y(ctx->mouse.ypos, ctx->height);
             GLfloat base_x = screen_to_clip_x(ctx->mouse.down_x, ctx->width);
+
+            GLfloat clip_y = screen_to_clip_y(ctx->mouse.ypos, ctx->height);
             GLfloat base_y = screen_to_clip_y(ctx->mouse.down_y, ctx->height);
 
             GLfloat origin[4] = {0.0f, 0.0f, 0.0f, 1.0f};
@@ -1112,7 +1062,7 @@ void main() {
             mat_apply_left<4>(cam_mat, origin);
             mat_apply_left<4>(perspective_mat, origin);
 
-            GLfloat clip_diff[3] = {clip_x - base_x, clip_y - base_y, 0.0f};
+            GLfloat clip_diff[2] = {clip_x - base_x, clip_y - base_y};
 
             glUseProgram(debug_prog);
             glBindVertexArray(debug_vao);
@@ -1138,11 +1088,11 @@ void main() {
             glUniform1f(debug_first_loc, -1.0f);
             glDrawArrays(GL_LINES, 2, 2);
 
-            GLfloat axis_1_dir = vecdot<3>(clip_diff, map_axis_1);
-            GLfloat inv_axis_1_len = 1.0f / veclen<3>(map_axis_1);
+            GLfloat axis_1_dir = vecdot<2>(clip_diff, map_axis_1);
+            GLfloat inv_axis_1_len = 1.0f / veclen<2>(map_axis_1);
 
-            GLfloat axis_2_dir = vecdot<3>(clip_diff, map_axis_2);
-            GLfloat inv_axis_2_len = 1.0f / veclen<3>(map_axis_2);
+            GLfloat axis_2_dir = vecdot<2>(clip_diff, map_axis_2);
+            GLfloat inv_axis_2_len = 1.0f / veclen<2>(map_axis_2);
 
             SignedAxis drag_axis;
             SignedAxis non_drag_axis;
@@ -1154,56 +1104,40 @@ void main() {
                 drag_axis = get_drag_axis_1(ctx->mouse.face_idx);
                 non_drag_axis = get_drag_axis_2(ctx->mouse.face_idx);
                 sign_dir = sgnf(axis_1_dir);
-                mag = veclen<3>(clip_diff) * inv_axis_1_len;
+                mag = veclen<2>(clip_diff) * inv_axis_1_len;
             } else {
                 // stronger in axis 2, so we drag in that direction
                 drag_axis = get_drag_axis_2(ctx->mouse.face_idx);
                 non_drag_axis = get_drag_axis_1(ctx->mouse.face_idx);
                 sign_dir = sgnf(axis_2_dir);
-                mag = veclen<3>(clip_diff) * inv_axis_2_len;
-
+                mag = veclen<2>(clip_diff) * inv_axis_2_len;
             }
 
             SignedAxis face_normal = get_normal(ctx->mouse.face_idx);
             SignedAxis rot_axis = axis_cross(face_normal, drag_axis);
-            SignedAxis non_rot_axis = axis_cross(face_normal, non_drag_axis);
 
             GLfloat sign_rot = rot_axis.neg ? -1.0f : 1.0f;
 
-            GLuint ind_rot;
-            GLfloat *arr_rot;
-            GLfloat last_rot;
+            void (*rotate_in_axis)(GLfloat mat[16], GLfloat delta);
             switch (rot_axis.axis) {
-            case X: { ind_rot = x; arr_rot = model->xrot; last_rot = ctx->mouse.last_xrot; } break;
-            case Y: { ind_rot = y; arr_rot = model->yrot; last_rot = ctx->mouse.last_yrot; } break;
-            case Z: { ind_rot = z; arr_rot = model->zrot; last_rot = ctx->mouse.last_zrot; } break;
+            case X: {rotate_in_axis = &rotate_in_x;} break;
+            case Y: {rotate_in_axis = &rotate_in_y;} break;
+            case Z: {rotate_in_axis = &rotate_in_z;} break;
             }
 
-            GLuint ind_non_rot;
-            GLfloat *arr_non_rot;
-            GLfloat last_non_rot;
-            switch (non_rot_axis.axis) {
-            case X: { ind_non_rot = x; arr_non_rot = model->xrot; last_non_rot = ctx->mouse.last_xrot; } break;
-            case Y: { ind_non_rot = y; arr_non_rot = model->yrot; last_non_rot = ctx->mouse.last_yrot; } break;
-            case Z: { ind_non_rot = z; arr_non_rot = model->zrot; last_non_rot = ctx->mouse.last_zrot; } break;
-            }
-
-            arr_rot[ind_rot] = last_rot + sign_rot * sign_dir * mag;
-            arr_non_rot[ind_non_rot] = last_non_rot;
+            memmove(part->rx_mat, ctx->mouse.last_rot, sizeof(ctx->mouse.last_rot));
+            rotate_in_axis(part->rx_mat, sign_rot * sign_dir * mag);
         }
 
         for (int x = 0; x < 3; ++x) {
             for (int y = 0; y < 3; ++y) {
                 for (int z = 0; z < 3; ++z) {
-                    int index = 3 * (3 * (x) + y) + z;
-
-                    CubeProgram program = programs[index];
+                    int idx = 3 * 3 * x + 3 * y + z;
+                    CubePart const *part = model->parts + idx;
+                    CubeProgram program = part->program;
 
                     GLfloat obj_mat[16] = {};
-                    GLubyte colors[6 * 3] = {};
-
-                    set_cube_obj_matrix(model, x, y, z, obj_mat);
-                    fill_cube_tex_colors(model, x, y, z, colors);
+                    set_cube_obj_matrix(part->tx_mat, part->rx_mat, obj_mat);
 
                     GLfloat cube_ix[3] = {};
                     GLfloat cube_face = {};
@@ -1216,12 +1150,12 @@ void main() {
                         nearest_dist = lensq;
                         memmove(nearest_point, cube_ix, sizeof(cube_ix));
                         nearest_face = cube_face;
-                        intersection_cube = index;
+                        intersection_cube = idx;
                     }
 
                     glUseProgram(program.prog);
                     glBindVertexArray(program.vao);
-                    glActiveTexture((GL_TEXTURE0) + index);
+                    glActiveTexture((GL_TEXTURE0) + idx);
 
                     if (intersects) {
                         glUniform1f(program.info.ix_face_loc, cube_face);
@@ -1236,7 +1170,7 @@ void main() {
 
                     glBindTexture(GL_TEXTURE_1D, program.texture);
                     glTexImage1D(GL_TEXTURE_1D, 0, GL_RGB, 6, 0, GL_RGB,
-                                 GL_UNSIGNED_BYTE, colors);
+                                 GL_UNSIGNED_BYTE, part->colors);
 
                     glDrawArrays(GL_TRIANGLES, 0, TRIANGLE_VERT_COUNT);
                 }
@@ -1244,19 +1178,14 @@ void main() {
         }
 
         if (intersection_cube >= 0 && ctx->mouse.down && !ctx->mouse.indices_saved) {
-            GLuint x = (intersection_cube / 9) % 3;
-            GLuint y = (intersection_cube / 3) % 3;
-            GLuint z = (intersection_cube / 1) % 3;
-
             ctx->mouse.cube_idx = intersection_cube;
             ctx->mouse.face_idx = nearest_face;
 
-            ctx->mouse.last_xrot = model->xrot[x];
-            ctx->mouse.last_yrot = model->yrot[y];
-            ctx->mouse.last_zrot = model->zrot[x];
+            CubePart const *part = model->parts + intersection_cube;
+            memmove(ctx->mouse.last_rot, part->rx_mat, sizeof(part->rx_mat));
 
             GLfloat obj_mat[16] = {};
-            set_cube_obj_matrix(model, x, y, z, obj_mat);
+            set_cube_obj_matrix(part->tx_mat, part->rx_mat, obj_mat);
 
             SignedAxis axis_1 = get_drag_axis_1(nearest_face);
             SignedAxis axis_2 = get_drag_axis_2(nearest_face);
@@ -1334,14 +1263,6 @@ void main() {
         int key_pu = glfwGetKey(window, GLFW_KEY_PAGE_UP);
         int key_pd = glfwGetKey(window, GLFW_KEY_PAGE_DOWN);
 
-        int key_z = glfwGetKey(window, GLFW_KEY_Z);
-        int key_x = glfwGetKey(window, GLFW_KEY_X);
-        int key_c = glfwGetKey(window, GLFW_KEY_C);
-
-        int key_1 = glfwGetKey(window, GLFW_KEY_1);
-        int key_2 = glfwGetKey(window, GLFW_KEY_2);
-        int key_3 = glfwGetKey(window, GLFW_KEY_3);
-
         double speed = 1.0;
 
         if (key_w) cam.ty += speed * delta_time;
@@ -1358,19 +1279,11 @@ void main() {
         if (key_pu) cam.rotz -= (speed * 0.125f) * delta_time;
         if (key_pd) cam.rotz += (speed * 0.125f) * delta_time;
 
-        if (key_1) idx = 0;
-        if (key_2) idx = 1;
-        if (key_3) idx = 2;
-
-        if (key_z) model->xrot[idx] += speed * delta_time;
-        if (key_x) model->yrot[idx] += speed * delta_time;
-        if (key_c) model->zrot[idx] += speed * delta_time;
-
         get_camera(cam_mat, &cam);
     }
 
     for (GLuint i = 0; i < 27; ++i) {
-        cleanup_cube_program(programs[i]);
+        cleanup_cube_program(model->parts[i].program);
     }
 
     glfwDestroyWindow(window);
