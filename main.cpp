@@ -1,21 +1,12 @@
-#define GL_GLEXT_PROTOTYPES
-#include <GL/gl.h>
-#include <GLFW/glfw3.h>
-
-#include <assert.h>
-#include <math.h>
-#include <string.h>
-#include <stddef.h>
-#include <stdio.h>
-#include <unistd.h>
-#include <float.h>
-
 #define unreachable _unreachable(__FILE__, __LINE__)
 #define _unreachable(f, l) __unreachable(f, l)
 #define __unreachable(f, l) assert(0 && ("Unreachable at " #f #l))
 
 #define FACE_COUNT (6)
 #define TRIANGLE_VERT_COUNT (FACE_COUNT * (2 * 3))
+
+#include "includes.hpp"
+#include "utils.cpp"
 
 char const *vert_shader_text = R"(
 #version 330 core
@@ -72,57 +63,28 @@ void main() {
 }
 )";
 
-GLuint compile_shader(GLenum type, char const *text) {
-    GLuint shader = glCreateShader(type);
+char const *pass_vert = R"(
+#version 330 core
 
-    glShaderSource(shader, 1, &text, nullptr);
-    glCompileShader(shader);
+in vec3 point;
 
-    GLint status = GL_FALSE;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
-
-    if (status != GL_TRUE) {
-        GLint len = 0;
-        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &len);
-
-        char *log = new char[len];
-        glGetShaderInfoLog(shader, len, nullptr, log);
-        fprintf(stderr, "Shader Log: %.*s\n", len, log);
-    }
-    assert(status == GL_TRUE);
-
-    return shader;
+void main() {
+    gl_Position = vec4(point, 1.0);
 }
+)";
 
-GLuint compile_link_program(char const *vert, char const *frag) {
-    GLuint program = glCreateProgram();
+char const *white_frag = R"(
+#version 330 core
 
-    GLuint vert_shader = compile_shader(GL_VERTEX_SHADER, vert);
-    GLuint frag_shader = compile_shader(GL_FRAGMENT_SHADER, frag);
+out vec4 color_out;
 
-    glAttachShader(program, vert_shader);
-    glAttachShader(program, frag_shader);
+uniform float first;
 
-    glLinkProgram(program);
-
-    GLint status = GL_FALSE;
-    glGetProgramiv(program, GL_LINK_STATUS, &status);
-
-    if (status != GL_TRUE) {
-        GLint len = 0;
-        glGetProgramiv(program, GL_INFO_LOG_LENGTH, &len);
-
-        char *log = new char[len];
-        glGetProgramInfoLog(program, len, nullptr, log);
-        fprintf(stderr, "Program Log: %.*s\n", len, log);
-    }
-    assert(status == GL_TRUE);
-
-    glDeleteShader(vert_shader);
-    glDeleteShader(frag_shader);
-
-    return program;
+void main() {
+    vec3 part = (first > 0.0) ? vec3(1.0) : vec3(1.0, 0.0, 0.0);
+    color_out = vec4(part, 1.0);
 }
+)";
 
 inline GLfloat sgnf(GLfloat f) {
     if (f < 0) return -1.0f;
@@ -166,79 +128,6 @@ inline SignedAxis axis_cross(SignedAxis lhs, SignedAxis rhs) {
     } break;
     }
     unreachable;
-}
-
-template <GLuint N>
-inline GLfloat vecdot(GLfloat const lhs[N], GLfloat const rhs[N]) {
-    GLfloat res = 0.0f;
-    for (GLuint i = 0; i < N; ++i) {
-        res += lhs[i] * rhs[i];
-    }
-    return res;
-}
-
-template <GLuint N>
-inline GLfloat veclen(GLfloat const vec[N]) {
-    return vecdot<N>(vec, vec);
-}
-
-inline void set_identity(GLfloat mat[16]) {
-    static GLfloat identity[16] = {
-        1.0f, 0.0f, 0.0f, 0.0f,
-        0.0f, 1.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, 0.0f,
-        0.0f, 0.0f, 0.0f, 1.0f,
-    };
-    memmove(mat, identity, sizeof(identity));
-}
-
-inline GLfloat row_mult(GLfloat const lhs[16], GLfloat const rhs[16], GLuint r,
-                        GLuint c) {
-    GLfloat val = 0.0f;
-    for (GLuint i = 0; i < 4; ++i) {
-        val += lhs[r * 4 + i] * rhs[i * 4 + c];
-    }
-    return val;
-}
-
-void mat_mult(GLfloat const lhs[16], GLfloat const rhs[16], GLfloat res[16]) {
-    for (GLuint r = 0; r < 4; ++r) {
-        for (GLuint c = 0 ; c < 4; ++c) {
-            res[r * 4 + c] = row_mult(lhs, rhs, r, c);
-        }
-    }
-}
-
-void mat_mult_left(GLfloat const lhs[16], GLfloat rhs[16]) {
-    GLfloat res[16];
-    mat_mult(lhs, rhs, res);
-
-    memmove(rhs, res, sizeof(res));
-}
-
-template <GLuint N>
-inline GLfloat row_apply(GLfloat const lhs[N * N], GLfloat const rhs[N],
-                         GLuint res) {
-    GLfloat val = 0.0f;
-    for (GLuint i = 0; i < N; ++i) {
-        val += lhs[res * N + i] * rhs[i];
-    }
-    return val;
-}
-
-template <GLuint N>
-void mat_apply(GLfloat lhs[N * N], GLfloat rhs[N], GLfloat res[N]) {
-    for (GLuint r = 0; r < N; ++r) {
-        res[r] = row_apply<N>(lhs, rhs, r);
-    }
-}
-
-template <GLuint N>
-void mat_apply_left(GLfloat lhs[N * N], GLfloat rhs[N]) {
-    GLfloat res[N];
-    mat_apply<N>(lhs, rhs, res);
-
-    memmove(rhs, res, sizeof(res));
 }
 
 static GLfloat const verts[TRIANGLE_VERT_COUNT * 4] = {
@@ -553,6 +442,46 @@ void cleanup_cube_program(CubeProgram cube_program) {
     glDeleteProgram(cube_program.prog);
 }
 
+void bind_cube_pos_data(GLfloat cube_radius, GLuint vbo) {
+    GLfloat scaled[TRIANGLE_VERT_COUNT * 4] = {};
+    memmove(scaled, verts, sizeof(verts));
+
+    for (GLuint i = 0; i < TRIANGLE_VERT_COUNT; ++i) {
+        scaled[i * 4 + 0] *= cube_radius;
+        scaled[i * 4 + 1] *= cube_radius;
+        scaled[i * 4 + 2] *= cube_radius;
+    }
+
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(scaled), scaled, GL_STATIC_DRAW);
+}
+
+void initialize_cube_program(CubeProgram const *program, GLuint texture_index,
+                             GLfloat radius) {
+    glUseProgram(program->prog);
+    glBindVertexArray(program->vao);
+    glActiveTexture((GL_TEXTURE0) + texture_index);
+
+    glBindBuffer(GL_ARRAY_BUFFER, program->vbo);
+
+    glVertexAttribPointer(program->info.pos_loc, 3, GL_FLOAT, GL_FALSE,
+                          4 * sizeof(GLfloat), (void const *)0);
+    glEnableVertexAttribArray(program->info.pos_loc);
+
+    glVertexAttribPointer(program->info.tex_ind_loc, 1, GL_FLOAT, GL_FALSE,
+                          4 * sizeof(GLfloat),
+                          (void const *)(3 * sizeof(GLfloat)));
+    glEnableVertexAttribArray(program->info.tex_ind_loc);
+
+    bind_cube_pos_data(radius, program->vbo);
+
+    glUniform1i(program->info.tex_loc, texture_index);
+
+    glBindTexture(GL_TEXTURE_1D, program->texture);
+    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+}
+
 void init_cube_part(CubePart *part, GLuint x, GLuint y, GLuint z,
                     GLfloat radius) {
     GLfloat translation_mat[16] = {
@@ -614,42 +543,6 @@ void init_cube(CubeModel *model) {
     }
 }
 
-void rotate_in_x(GLfloat mat[16], GLfloat delta) {
-    GLfloat rotx_mat[16] = {
-        1.0f, 0.0f,        0.0f,         0.0f,
-        0.0f, cosf(delta), -sinf(delta), 0.0f,
-        0.0f, sinf(delta), cosf(delta),  0.0f,
-        0.0f, 0.0f,        0.0f,         1.0f,
-    };
-
-    mat_mult_left(mat, rotx_mat);
-    memmove(mat, rotx_mat, sizeof(rotx_mat));
-}
-
-void rotate_in_y(GLfloat mat[16], GLfloat delta) {
-    GLfloat roty_mat[16] = {
-        cosf(delta),  0.0f, sinf(delta), 0.0f,
-        0.0f,         1.0f, 0.0f,        0.0f,
-        -sinf(delta), 0.0f, cosf(delta), 0.0f,
-        0.0f,         0.0f, 0.0f,        1.0f,
-    };
-
-    mat_mult_left(mat, roty_mat);
-    memmove(mat, roty_mat, sizeof(roty_mat));
-}
-
-void rotate_in_z(GLfloat mat[16], GLfloat delta) {
-    GLfloat rotz_mat[16] = {
-        cosf(delta), -sinf(delta), 0.0f, 0.0f,
-        sinf(delta), cosf(delta),  0.0f, 0.0f,
-        0.0f,        0.0f,         1.0f, 0.0f,
-        0.0f,        0.0f,         0.0f, 1.0f,
-    };
-
-    mat_mult_left(mat, rotz_mat);
-    memmove(mat, rotz_mat, sizeof(rotz_mat));
-}
-
 struct Camera {
     GLfloat tx, ty, tz;
     GLfloat rotx, roty, rotz;
@@ -693,20 +586,6 @@ void get_camera(GLfloat camera[16], Camera const *cam) {
     mat_mult_left(rotx_mat, camera);
 }
 
-void bind_cube_pos_data(GLfloat cube_radius, GLuint vbo) {
-    GLfloat scaled[TRIANGLE_VERT_COUNT * 4] = {};
-    memmove(scaled, verts, sizeof(verts));
-
-    for (GLuint i = 0; i < TRIANGLE_VERT_COUNT; ++i) {
-        scaled[i * 4 + 0] *= cube_radius;
-        scaled[i * 4 + 1] *= cube_radius;
-        scaled[i * 4 + 2] *= cube_radius;
-    }
-
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(scaled), scaled, GL_STATIC_DRAW);
-}
-
 void set_cube_obj_matrix(GLfloat const tx_mat[16], GLfloat const rx_mat[16],
                          GLfloat mat[16]) {
     set_identity(mat);
@@ -732,100 +611,6 @@ inline GLfloat screen_to_clip_x(double x, double screen_width) {
 inline GLfloat screen_to_clip_y(double y, double screen_height) {
     double inv_y = screen_height - y;
     return GLfloat(inv_y / screen_height * 2.0 - 1.0);
-}
-
-bool triangle_intersects(GLfloat x, GLfloat y, GLfloat z, GLfloat a[3],
-                         GLfloat b[3], GLfloat c[3], GLfloat ix[3]) {
-    // We have a ray from the origin, and a plane in space. If the plane went
-    // through the origin as well, then the intersection point would be the
-    // origin. We can define the plane with (a) and the normal of the plane
-    // N = (b-a) x (c-a). We see that the vector a shifts the plane by some
-    // amount in the direction of N (a . N / |N|). Additionally, (x,y,z) has
-    // some component in the direction of N, and we can find that similarly as
-    // ((x,y,z) . N / |N|). Then for an intersection, we would have (x,y,z) * t
-    // on the plane, which means the distance in the normal direction would be
-    // the same as (a), so we have t = (a . N) / ((x,y,z) . N)
-    //
-    // Now that we have a point on the plane, we need to see if it's in the
-    // triangle. We want to find the components of (b-a) and (c-a) in
-    // (intersection-a) The following matrix maps e_1 to b-a, e_2 to c-a, and
-    // e_3 to their cross product. So if we take the inverse of this, and then
-    // apply it to the intersection point, we should find the component we want.
-    // [ (b-a)_x  (c-a)_x  cross_x ]
-    // [ (b-a)_y  (c-a)_y  cross_y ]
-    // [ (b-a)_z  (c-a)_z  cross_z ]
-    // Using the formula A * adj(A) = det(A) * I, we need to find the adjugate
-    // matrix and the determinant to get the inverse. The determinant appears to
-    // just be the length of the cross product vector for some reason.
-
-    GLfloat ray[3] = {x, y, z};
-
-    GLfloat ba[3] = {
-        b[0] - a[0],
-        b[1] - a[1],
-        b[2] - a[2],
-    };
-
-    GLfloat ca[3] = {
-        c[0] - a[0],
-        c[1] - a[1],
-        c[2] - a[2],
-    };
-
-    GLfloat cross[3] = {
-        +(ba[1] * ca[2] - ba[2] * ca[1]),
-        -(ba[0] * ca[2] - ba[2] * ca[0]),
-        +(ba[0] * ca[1] - ba[1] * ca[0]),
-    };
-
-    GLfloat det = veclen<3>(cross);
-    if (fabsf(det) < 1e-3) {
-        // singular matrix, we have a degenerate triangle
-        return false;
-    }
-
-    GLfloat det_inv = 1.0f / det;
-    GLfloat inv[9] = {
-        +det_inv * (ca[1] * cross[2] - ca[2] * cross[1]),
-        -det_inv * (ca[0] * cross[2] - ca[2] * cross[0]),
-        +det_inv * (ca[0] * cross[1] - ca[1] * cross[0]),
-
-        -det_inv * (ba[1] * cross[2] - ba[2] * cross[1]),
-        +det_inv * (ba[0] * cross[2] - ba[2] * cross[0]),
-        -det_inv * (ba[0] * cross[1] - ba[1] * cross[0]),
-
-        +det_inv * (ba[1] * ca[2] - ba[2] * ca[1]),
-        -det_inv * (ba[0] * ca[2] - ba[2] * ca[0]),
-        +det_inv * (ba[0] * ca[1] - ba[1] * ca[0]),
-    };
-
-    GLfloat a_cross = vecdot<3>(a, cross);
-    GLfloat xyz_cross = vecdot<3>(ray, cross);
-
-    if (xyz_cross > 0.0f) {
-        // pretty sure there is no way for this to be intersecting?
-        return false;
-    }
-
-    GLfloat t = a_cross / xyz_cross;
-    if (t < 0) {
-        return false;
-    }
-
-    GLfloat ix_adjusted[3] = {x * t - a[0], y * t - a[1], z * t - a[2]};
-    GLfloat components[3] = {};
-
-    mat_apply<3>(inv, ix_adjusted, components);
-
-    GLfloat x_comp = components[0];
-    GLfloat y_comp = components[1];
-    if (x_comp > 0 && y_comp > 0 && ((x_comp + y_comp) <= 1.0f)) {
-        GLfloat unadjusted[3] = {x * t, y * t, z * t};
-        memmove(ix, unadjusted, sizeof(unadjusted));
-
-        return true;
-    }
-    return false;
 }
 
 // Tests whether a ray given by (x, y, z) intersects with the given cube
@@ -892,6 +677,59 @@ bool cube_intersects(GLfloat x, GLfloat y, GLfloat z, CubeModel const *model,
     return found;
 }
 
+struct DebugProgramInfo {
+    GLint first_loc;
+    GLint point_loc;
+};
+
+struct DebugProgram {
+    GLuint prog;
+    DebugProgramInfo info;
+
+    GLuint vao;
+    GLuint vbo;
+};
+
+DebugProgram get_debug_program() {
+    GLuint vao = 0;
+    GLuint vbo = 0;
+
+    GLuint prog = compile_link_program(pass_vert, white_frag);
+    glUseProgram(prog);
+
+    GLint debug_first_loc = glGetUniformLocation(prog, "first");
+    GLint debug_point_loc = glGetAttribLocation(prog, "point");
+
+    glCreateVertexArrays(1, &vao);
+    glCreateBuffers(1, &vbo);
+
+    DebugProgram debug_prog = {
+        prog,
+        {debug_first_loc, debug_point_loc},
+        vao,
+        vbo,
+    };
+    return debug_prog;
+}
+
+void cleanup_debug_program(DebugProgram debug) {
+    glDeleteBuffers(1, &debug.vbo);
+    glDeleteVertexArrays(1, &debug.vao);
+    glDeleteProgram(debug.prog);
+}
+
+void initialize_debug_program(DebugProgram *debug) {
+    glUseProgram(debug->prog);
+    glBindVertexArray(debug->vao);
+
+    glLineWidth(20.0f);
+
+    glBindBuffer(GL_ARRAY_BUFFER, debug->vbo);
+    glVertexAttribPointer(debug->info.point_loc, 3, GL_FLOAT, GL_FALSE,
+                          3 * sizeof(GLfloat), (void const *)0);
+    glEnableVertexAttribArray(debug->info.point_loc);
+}
+
 int main() {
     glfwSetErrorCallback(&handle_error);
 
@@ -952,30 +790,7 @@ int main() {
     init_perspective_mat(ctx->props, perspective_mat);
 
     for (GLuint i = 0; i < 27; ++i) {
-        CubeProgram *program = &model->parts[i].program;
-
-        glUseProgram(program->prog);
-        glBindVertexArray(program->vao);
-        glActiveTexture((GL_TEXTURE0) + i);
-
-        glBindBuffer(GL_ARRAY_BUFFER, program->vbo);
-
-        glVertexAttribPointer(program->info.pos_loc, 3, GL_FLOAT, GL_FALSE,
-                              4 * sizeof(GLfloat), (void const *)0);
-        glEnableVertexAttribArray(program->info.pos_loc);
-
-        glVertexAttribPointer(program->info.tex_ind_loc, 1, GL_FLOAT, GL_FALSE,
-                              4 * sizeof(GLfloat),
-                              (void const *)(3 * sizeof(GLfloat)));
-        glEnableVertexAttribArray(program->info.tex_ind_loc);
-
-        bind_cube_pos_data(model->radius, program->vbo);
-
-        glUniform1i(program->info.tex_loc, i);
-
-        glBindTexture(GL_TEXTURE_1D, program->texture);
-        glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        initialize_cube_program(&model->parts[i].program, i, model->radius);
     }
 
     Camera cam = {};
@@ -987,43 +802,9 @@ int main() {
     double target_time = 1.0 / 16.0 ; // seconds per frame
     double cur_time = glfwGetTime();
 
-    char const *pass_vert = R"(
-#version 330 core
+    DebugProgram debug = get_debug_program();
 
-in vec3 point;
-
-void main() {
-    gl_Position = vec4(point, 1.0);
-}
-)";
-
-    char const *white_frag = R"(
-#version 330 core
-
-out vec4 color_out;
-
-uniform float first;
-
-void main() {
-    vec3 part = (first > 0.0) ? vec3(1.0) : vec3(1.0, 0.0, 0.0);
-    color_out = vec4(part, 1.0);
-}
-)";
-
-    GLuint debug_prog = compile_link_program(pass_vert, white_frag);
-    GLuint debug_vao, debug_vbo;
-    glCreateVertexArrays(1, &debug_vao);
-    glCreateBuffers(1, &debug_vbo);
-
-    glUseProgram(debug_prog);
-    GLint debug_first_loc = glGetUniformLocation(debug_prog, "first");
-    GLint debug_point_loc = glGetAttribLocation(debug_prog, "point");
-
-    glLineWidth(20.0f);
-    glBindVertexArray(debug_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, debug_vbo);
-    glVertexAttribPointer(debug_point_loc, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), (void const *)0);
-    glEnableVertexAttribArray(debug_point_loc);
+    initialize_debug_program(&debug);
 
     while (!glfwWindowShouldClose(window)) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -1064,9 +845,9 @@ void main() {
 
             GLfloat clip_diff[2] = {clip_x - base_x, clip_y - base_y};
 
-            glUseProgram(debug_prog);
-            glBindVertexArray(debug_vao);
-            glBindBuffer(GL_ARRAY_BUFFER, debug_vbo);
+            glUseProgram(debug.prog);
+            glBindVertexArray(debug.vao);
+            glBindBuffer(GL_ARRAY_BUFFER, debug.vbo);
 
             GLfloat fix_origin = 1.0f / origin[3];
 
@@ -1083,9 +864,9 @@ void main() {
             };
 
             glBufferData(GL_ARRAY_BUFFER, sizeof(points), points, GL_STATIC_DRAW);
-            glUniform1f(debug_first_loc, +1.0f);
+            glUniform1f(debug.info.first_loc, +1.0f);
             glDrawArrays(GL_LINES, 0, 2);
-            glUniform1f(debug_first_loc, -1.0f);
+            glUniform1f(debug.info.first_loc, -1.0f);
             glDrawArrays(GL_LINES, 2, 2);
 
             GLfloat axis_1_dir = vecdot<2>(clip_diff, map_axis_1);
@@ -1281,6 +1062,8 @@ void main() {
 
         get_camera(cam_mat, &cam);
     }
+
+    cleanup_debug_program(debug);
 
     for (GLuint i = 0; i < 27; ++i) {
         cleanup_cube_program(model->parts[i].program);
