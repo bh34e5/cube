@@ -1,5 +1,5 @@
 .ccls
 .ccls-cache/
+.vim
 
 build/
-cube
