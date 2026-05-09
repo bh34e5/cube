@@ -1,0 +1,6 @@
+glBegin
+glClear
+glClearColor
+glColor3f
+glEnd
+glVertex2f
