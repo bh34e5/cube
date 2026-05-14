@@ -1,47 +1,9 @@
+#include "common.hh"
+
 #include <assert.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
-
-#define LEN(a) (sizeof((a)) / sizeof(*(a)))
-
-template <typename T> struct ConstifyImpl {
-    using V = const T;
-};
-
-template <typename T> struct ConstifyImpl<const T> {
-    using V = const T;
-};
-
-template <typename T> using Constify = typename ConstifyImpl<T>::V;
-
-template <typename T, typename Size = unsigned int> struct Slice {
-    Size len;
-    T *dat;
-
-    T &operator[](Size n) {
-        assert(n < len);
-        return dat[n];
-    }
-
-    Slice from(Size start) {
-        assert(start <= len);
-
-        Slice res = {};
-        if (start < len) {
-            res.len = len - start;
-            res.dat = dat + start;
-        }
-        return res;
-    }
-
-    Slice until(Size end) {
-        assert(end <= len);
-        return {end, dat};
-    }
-
-    Slice<Constify<T>, Size> constify() const { return {len, (T const *)dat}; }
-};
 
 struct Reader {
     FILE *file;
@@ -65,9 +27,9 @@ Reader readerFrom(FILE *file, unsigned int cap, char *buf) {
     return reader;
 }
 
-Slice<char> readLine(Reader &reader) {
+bool readLine(Reader &reader, Slice<char> &res) {
+    bool complete = false;
     bool retry = false;
-    Slice<char> res = {};
 
     if (reader.scan == reader.fill) {
         if (!reader.finished) {
@@ -97,12 +59,16 @@ Slice<char> readLine(Reader &reader) {
 
             retry = true;
         } else {
-            unsigned int len = reader.scan - reader.head;
-            char *start = reader.buf + reader.head;
+            if (reader.head == reader.scan) {
+                complete = true;
+            } else {
+                unsigned int len = reader.scan - reader.head;
+                char *start = reader.buf + reader.head;
 
-            res = {len, start};
+                res = {len, start};
 
-            reader.head += len;
+                reader.head += len;
+            }
         }
     } else {
         bool found = false;
@@ -131,10 +97,10 @@ Slice<char> readLine(Reader &reader) {
     }
 
     if (retry) {
-        return readLine(reader);
+        complete = readLine(reader, res);
     }
 
-    return res;
+    return complete;
 }
 
 struct Writer {
@@ -224,9 +190,10 @@ int main(int argc, char const **argv) {
     Writer writer = WRITER_FROM(out_file, write_buf);
 
     char const *preamble = R"""(
-#ifndef GL_FUNCTIONS_DEF
-#define GL_FUNCTIONS_DEF
+#ifndef GL_FUNCTIONS_hh
+#define GL_FUNCTIONS_hh
 
+#define GL_GLEXT_PROTOTYPES
 #include <GL/gl.h>
 #include <GL/glext.h>
 
@@ -234,27 +201,25 @@ int main(int argc, char const **argv) {
 
     char const *postamble = R"""(
 
-#endif // GL_FUNCTIONS_DEF
+#endif // GL_FUNCTIONS_hh
 )""";
 
     writeStr(writer, preamble + 1); // skip initial newline
 
     Slice<char> line = {};
-    while ((line = readLine(reader)).len != 0) {
-        assert(line.len > 2);
-        assert(line[0] == 'g');
-        assert(line[1] == 'l');
-        assert(isupper(line[2]));
+    while (!readLine(reader, line)) {
+        if (line.len > 0) {
+            assert(islower(line[0]));
 
-        writeStr(writer, "\\\n    X(");
-        writeSlice(writer, line.constify());
-        writeStr(writer, ", ");
+            writeStr(writer, "\\\n    X(gl");
+            writeChar(writer, toupper(line[0]));
+            writeSlice(writer, line.from(1));
+            writeStr(writer, ", ");
+            writeSlice(writer, line);
+            writeChar(writer, ')');
 
-        Slice<char> mapped = line.from(2);
-        mapped[0] = tolower(mapped[0]);
-
-        writeSlice(writer, mapped.constify());
-        writeChar(writer, ')');
+            line = {};
+        }
     }
 
     writeStr(writer, postamble);
