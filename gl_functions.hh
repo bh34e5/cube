@@ -32,11 +32,21 @@
     X(glBufferData, bufferData)\
     X(glDeleteBuffers, deleteBuffers)\
     X(glGenBuffers, genBuffers)\
+    X(glActiveTexture, activeTexture)\
+    X(glBindTexture, bindTexture)\
+    X(glDeleteTextures, deleteTextures)\
+    X(glGenTextures, genTextures)\
+    X(glTexImage2D, texImage2D)\
+    X(glTexParameteri, texParameteri)\
+    X(glTexStorage2D, texStorage2D)\
     X(glEnableVertexAttribArray, enableVertexAttribArray)\
     X(glGetAttribLocation, getAttribLocation)\
     X(glVertexAttribDivisor, vertexAttribDivisor)\
     X(glVertexAttribPointer, vertexAttribPointer)\
     X(glGetUniformLocation, getUniformLocation)\
+    X(glUniform1f, uniform1f)\
+    X(glUniform1i, uniform1i)\
+    X(glUniform3fv, uniform3fv)\
     X(glUniformMatrix4fv, uniformMatrix4fv)\
     X(glDrawArraysInstanced, drawArraysInstanced)
 

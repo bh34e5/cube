@@ -31,12 +31,23 @@ bufferData
 deleteBuffers
 genBuffers
 
+activeTexture
+bindTexture
+deleteTextures
+genTextures
+texImage2D
+texParameteri
+texStorage2D
+
 enableVertexAttribArray
 getAttribLocation
 vertexAttribDivisor
 vertexAttribPointer
 
 getUniformLocation
+uniform1f
+uniform1i
+uniform3fv
 uniformMatrix4fv
 
 drawArraysInstanced

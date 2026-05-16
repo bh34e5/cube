@@ -1,12 +1,12 @@
 #version 330 core
 
-uniform sampler1D color_tex;
+uniform sampler1DArray color_tex;
 
 in float f_tex;
+in float f_layer;
 
 out vec4 color;
 
 void main() {
-  // Color = texture(color_tex, f_tex);
-  color = vec4(1.0);
+  color = texture(color_tex, vec2(f_tex, f_layer));
 }
