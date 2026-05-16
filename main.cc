@@ -24,8 +24,35 @@ struct KeyEvent {
     int mods;
 };
 
+struct MouseButtonEvent {
+    int button;
+    int action;
+    int mods;
+};
+
+struct CursorPosEvent {
+    double x;
+    double y;
+};
+
+struct Event {
+    enum Kind {
+        Kind_None,
+        Kind_Key,
+        Kind_MouseButton,
+        Kind_CursorPos,
+    };
+
+    Kind kind;
+    union {
+        KeyEvent key_event;
+        MouseButtonEvent mouse_button_event;
+        CursorPosEvent cursor_pos_event;
+    };
+};
+
 struct Context {
-    KeyEvent events[EVENT_COUNT];
+    Event events[EVENT_COUNT];
     unsigned short next_event;
     unsigned short last_event;
 };
@@ -41,22 +68,60 @@ void checkError(GL &gl, int line) {
     }
 }
 
+void pushEvent(Context *context, Event event) {
+    unsigned short next_event = NEXT_EVENT(context->next_event);
+    if (next_event != context->last_event) {
+        context->events[context->next_event] = event;
+        context->next_event = next_event;
+    }
+}
+
 void glfwHandleKey(GLFWwindow *window, int key, int scancode, int action,
                    int mods) {
     (void)scancode;
 
     Context *context = (Context *)glfwGetWindowUserPointer(window);
 
-    KeyEvent event = {};
-    event.key = key;
-    event.action = action;
-    event.mods = mods;
+    KeyEvent key_event = {};
+    key_event.key = key;
+    key_event.action = action;
+    key_event.mods = mods;
 
-    unsigned short next_event = NEXT_EVENT(context->next_event);
-    if (next_event != context->last_event) {
-        context->events[context->next_event] = event;
-        context->next_event = next_event;
-    }
+    Event event = {};
+    event.kind = Event::Kind_Key;
+    event.key_event = key_event;
+
+    pushEvent(context, event);
+}
+
+void glfwHandleMouseButton(GLFWwindow *window, int button, int action,
+                           int mods) {
+    Context *context = (Context *)glfwGetWindowUserPointer(window);
+
+    MouseButtonEvent mouse_button_event = {};
+    mouse_button_event.button = button;
+    mouse_button_event.action = action;
+    mouse_button_event.mods = mods;
+
+    Event event = {};
+    event.kind = Event::Kind_MouseButton;
+    event.mouse_button_event = mouse_button_event;
+
+    pushEvent(context, event);
+}
+
+void glfwHandleCursorPos(GLFWwindow *window, double xpos, double ypos) {
+    Context *context = (Context *)glfwGetWindowUserPointer(window);
+
+    CursorPosEvent cursor_pos_event = {};
+    cursor_pos_event.x = xpos;
+    cursor_pos_event.y = ypos;
+
+    Event event = {};
+    event.kind = Event::Kind_CursorPos;
+    event.cursor_pos_event = cursor_pos_event;
+
+    pushEvent(context, event);
 }
 
 int loadFunctions(GL &gl) {
@@ -458,7 +523,10 @@ float cubes[] = {
 };
 
 GLubyte *generateCubeTexture() {
-    GLubyte *vals = (GLubyte *)malloc(INSTANCE_COUNT * 4 * 6 * sizeof(GLubyte));
+    unsigned int size = INSTANCE_COUNT * 4 * 6 * sizeof(GLubyte);
+    GLubyte *vals = (GLubyte *)malloc(size);
+
+    memset(vals, 0, size);
 
     unsigned int stride = 4 * 6 * sizeof(GLubyte);
     GLubyte source[4 * 6] = {
@@ -470,8 +538,34 @@ GLubyte *generateCubeTexture() {
         0xFF, 0xFF, 0xFF, 0xFF, // white
     };
 
-    for (unsigned int i = 0; i < INSTANCE_COUNT; ++i) {
-        memcpy(vals + stride * i, source, stride);
+    for (char x = 0; x < 3; ++x) {
+        for (char y = 0; y < 3; ++y) {
+            for (char z = 0; z < 3; ++z) {
+                GLubyte *dest = vals + stride * (9 * x + 3 * y + z);
+
+                if (z == 0) {
+                    memcpy(dest + 4 * 0, source + 4 * 0, 4);
+                }
+                if (x == 2) {
+                    memcpy(dest + 4 * 1, source + 4 * 1, 4);
+                }
+                if (y == 2) {
+                    memcpy(dest + 4 * 2, source + 4 * 2, 4);
+                }
+                if (x == 0) {
+                    memcpy(dest + 4 * 3, source + 4 * 3, 4);
+                }
+                if (y == 0) {
+                    memcpy(dest + 4 * 4, source + 4 * 4, 4);
+                }
+                if (z == 2) {
+                    memcpy(dest + 4 * 5, source + 4 * 5, 4);
+                }
+
+                // ensure alpha
+                dest[3] = 0xFF;
+            }
+        }
     }
 
     return vals;
@@ -517,6 +611,8 @@ int main() {
 
     glfwSetWindowUserPointer(window, &context);
     glfwSetKeyCallback(window, glfwHandleKey);
+    glfwSetMouseButtonCallback(window, glfwHandleMouseButton);
+    glfwSetCursorPosCallback(window, glfwHandleCursorPos);
 
     gl.enable(GL_CULL_FACE);
     gl.enable(GL_DEPTH_TEST);
@@ -624,33 +720,72 @@ int main() {
     bool a_down = false;
     bool s_down = false;
     bool d_down = false;
+    bool right_click_down = false;
 
     double last_time_seconds = glfwGetTime();
+    double cur_mouse_x = 0.0;
+    double cur_mouse_y = 0.0;
+
+    double right_click_drag_x = 0.0;
+    double right_click_drag_y = 0.0;
+
+    glfwGetCursorPos(window, &cur_mouse_x, &cur_mouse_y);
 
     while (!glfwWindowShouldClose(window)) {
         double cur_time_seconds = glfwGetTime();
         double delta_time_seconds = cur_time_seconds - last_time_seconds;
 
+        right_click_drag_x = 0.0;
+        right_click_drag_y = 0.0;
+
         // handle inputs
 
         while (context.last_event != context.next_event) {
-            KeyEvent event = context.events[context.last_event];
+            Event event = context.events[context.last_event];
+            switch (event.kind) {
+            case Event::Kind_None: {
+            } break;
+            case Event::Kind_Key: {
+                KeyEvent ke = event.key_event;
 
-            if (event.action == GLFW_PRESS || event.action == GLFW_RELEASE) {
-                switch (event.key) {
-                case GLFW_KEY_W: {
-                    w_down = event.action == GLFW_PRESS;
-                } break;
-                case GLFW_KEY_A: {
-                    a_down = event.action == GLFW_PRESS;
-                } break;
-                case GLFW_KEY_S: {
-                    s_down = event.action == GLFW_PRESS;
-                } break;
-                case GLFW_KEY_D: {
-                    d_down = event.action == GLFW_PRESS;
-                } break;
+                if (ke.action == GLFW_PRESS || ke.action == GLFW_RELEASE) {
+                    switch (ke.key) {
+                    case GLFW_KEY_W: {
+                        w_down = ke.action == GLFW_PRESS;
+                    } break;
+                    case GLFW_KEY_A: {
+                        a_down = ke.action == GLFW_PRESS;
+                    } break;
+                    case GLFW_KEY_S: {
+                        s_down = ke.action == GLFW_PRESS;
+                    } break;
+                    case GLFW_KEY_D: {
+                        d_down = ke.action == GLFW_PRESS;
+                    } break;
+                    }
                 }
+            } break;
+            case Event::Kind_MouseButton: {
+                MouseButtonEvent mbe = event.mouse_button_event;
+
+                if (mbe.button == GLFW_MOUSE_BUTTON_RIGHT) {
+                    right_click_down = mbe.action == GLFW_PRESS;
+                }
+            } break;
+            case Event::Kind_CursorPos: {
+                CursorPosEvent cpe = event.cursor_pos_event;
+
+                double delta_x = cpe.x - cur_mouse_x;
+                double delta_y = cpe.y - cur_mouse_y;
+
+                if (right_click_down) {
+                    right_click_drag_x += delta_x;
+                    right_click_drag_y += delta_y;
+                }
+
+                cur_mouse_x = cpe.x;
+                cur_mouse_y = cpe.y;
+            } break;
             }
 
             context.last_event = NEXT_EVENT(context.last_event);
@@ -672,10 +807,13 @@ int main() {
             camera_y_vel += 1.0f;
         }
 
-        camera_rotation =
-            yAxisRotation(camera_x_vel * delta_time_seconds) * camera_rotation;
-        camera_rotation =
-            xAxisRotation(camera_y_vel * delta_time_seconds) * camera_rotation;
+        camera_x_vel -= float(right_click_drag_x);
+        camera_y_vel -= float(right_click_drag_y);
+
+        Matrix4 x_rot = yAxisRotation(camera_x_vel * delta_time_seconds);
+        Matrix4 y_rot = xAxisRotation(camera_y_vel * delta_time_seconds);
+
+        camera_rotation = y_rot * x_rot * camera_rotation;
 
         gl.uniform1f(camera_translate_loc, camera_translate);
         gl.uniformMatrix4fv(camera_rotation_loc, 1, GL_TRUE,
