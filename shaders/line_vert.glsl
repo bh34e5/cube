@@ -6,12 +6,11 @@ uniform float camera_translate;
 uniform mat4 camera_rotation;
 
 in vec3 a_vert_position;
-in float a_vert_tex_coord;
 in vec3 a_cube_offset;
 in vec3 a_cube_rotation;
+in vec3 a_color;
 
-out float f_tex;
-out float f_layer;
+out vec3 v_color;
 
 mat4 xRotMat(float theta);
 mat4 yRotMat(float theta);
@@ -31,7 +30,5 @@ void main() {
   vec4 screen = perspective * camera_mat * world;
 
   gl_Position = screen;
-
-  f_tex = (a_vert_tex_coord + 0.5) / 6.0;
-  f_layer = gl_InstanceID;
+  v_color = a_color;
 }

@@ -7,6 +7,7 @@
 
 #define FOR_GL_FUNCTIONS(X)\
     X(glGetError, getError)\
+    X(glBlendFunc, blendFunc)\
     X(glCullFace, cullFace)\
     X(glEnable, enable)\
     X(glFrontFace, frontFace)\
@@ -48,6 +49,7 @@
     X(glUniform1i, uniform1i)\
     X(glUniform3fv, uniform3fv)\
     X(glUniformMatrix4fv, uniformMatrix4fv)\
+    X(glDrawArrays, drawArrays)\
     X(glDrawArraysInstanced, drawArraysInstanced)
 
 #endif // GL_FUNCTIONS_hh

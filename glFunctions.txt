@@ -1,5 +1,6 @@
 getError
 
+blendFunc
 cullFace
 enable
 frontFace
@@ -50,4 +51,5 @@ uniform1i
 uniform3fv
 uniformMatrix4fv
 
+drawArrays
 drawArraysInstanced
