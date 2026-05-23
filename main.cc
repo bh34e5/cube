@@ -1013,11 +1013,17 @@ int main() {
 #endif
 
     bool should_quit = false;
+    bool right_click_down = false;
+
     bool w_down = false;
     bool a_down = false;
     bool s_down = false;
     bool d_down = false;
-    bool right_click_down = false;
+
+    bool up_down = false;
+    bool left_down = false;
+    bool down_down = false;
+    bool right_down = false;
 
     double last_time_seconds = glfwGetTime();
     double cur_mouse_x = 0.0;
@@ -1051,19 +1057,21 @@ int main() {
 
                 if (ke.action == GLFW_PRESS || ke.action == GLFW_RELEASE) {
                     switch (ke.key) {
-                    case GLFW_KEY_W: {
-                        w_down = ke.action == GLFW_PRESS;
-                    } break;
-                    case GLFW_KEY_A: {
-                        a_down = ke.action == GLFW_PRESS;
-                    } break;
-                    case GLFW_KEY_S: {
-                        s_down = ke.action == GLFW_PRESS;
-                    } break;
-                    case GLFW_KEY_D: {
-                        d_down = ke.action == GLFW_PRESS;
-                    } break;
+#define CHECK(KEY, key)                                                        \
+    case KEY: {                                                                \
+        key = ke.action == GLFW_PRESS;                                         \
+    } break
+                        CHECK(GLFW_KEY_W, w_down);
+                        CHECK(GLFW_KEY_A, a_down);
+                        CHECK(GLFW_KEY_S, s_down);
+                        CHECK(GLFW_KEY_D, d_down);
+
+                        CHECK(GLFW_KEY_UP, up_down);
+                        CHECK(GLFW_KEY_LEFT, left_down);
+                        CHECK(GLFW_KEY_DOWN, down_down);
+                        CHECK(GLFW_KEY_RIGHT, right_down);
                     }
+#undef CHECK
                 }
             } break;
             case Event::Kind_MouseButton: {
@@ -1127,6 +1135,25 @@ int main() {
                             camera_rotation.vals);
         useMainProgram(gl, mp);
 #endif
+
+        float cube_x_vel = 0.0f;
+        float cube_y_vel = 0.0f;
+
+        if (left_down) {
+            cube_x_vel += 1.0f;
+        }
+        if (right_down) {
+            cube_x_vel -= 1.0f;
+        }
+        if (up_down) {
+            cube_y_vel += 1.0f;
+        }
+        if (down_down) {
+            cube_y_vel -= 1.0f;
+        }
+
+        cubes[0].velocity.z() += cube_x_vel * delta_time_seconds;
+        cubes[0].velocity.y() += cube_y_vel * delta_time_seconds;
 
         // render
 
