@@ -1,5 +1,6 @@
 #include "common.hh"
 #include "gl_functions.hh"
+#include "math.hh"
 
 #include <GLFW/glfw3.h>
 
@@ -371,21 +372,6 @@ void deleteTexture(GL &gl, Texture &tex) {
     tex.handle = 0;
 }
 
-struct Matrix4 {
-    float vals[16];
-};
-
-#define MAT4(x, y) ((x) * 4 + (y))
-
-Matrix4 identityMatrix4() {
-    return {
-        1.0f, 0.0f, 0.0f, 0.0f, //
-        0.0f, 1.0f, 0.0f, 0.0f, //
-        0.0f, 0.0f, 1.0f, 0.0f, //
-        0.0f, 0.0f, 0.0f, 1.0f, //
-    };
-}
-
 Matrix4 perspectiveMatrix(float near, float far, float width, float height) {
     // float perspective_mat[16] = {
     //     2.0*n/w, 0.0,      0.0,          0.0,
@@ -411,96 +397,6 @@ Matrix4 perspectiveMatrix(float near, float far, float width, float height) {
     mat.vals[MAT4(3, 2)] = -1.0f;
 
     return mat;
-}
-
-Matrix4 xAxisRotation(float theta) {
-    Matrix4 mat = identityMatrix4();
-
-    float ct = cos(theta);
-    float st = sin(theta);
-
-    mat.vals[MAT4(1, 1)] = +ct;
-    mat.vals[MAT4(1, 2)] = +st;
-    mat.vals[MAT4(2, 1)] = -st;
-    mat.vals[MAT4(2, 2)] = +ct;
-
-    return mat;
-}
-
-Matrix4 yAxisRotation(float theta) {
-    Matrix4 mat = identityMatrix4();
-
-    float ct = cos(theta);
-    float st = sin(theta);
-
-    mat.vals[MAT4(0, 0)] = +ct;
-    mat.vals[MAT4(0, 2)] = -st;
-    mat.vals[MAT4(2, 0)] = +st;
-    mat.vals[MAT4(2, 2)] = +ct;
-
-    return mat;
-}
-
-Matrix4 operator*(Matrix4 const &lhs, Matrix4 const &rhs) {
-    Matrix4 res; // no clear because we are setting every value
-
-    for (char i = 0; i < 4; ++i) {
-        for (char j = 0; j < 4; ++j) {
-            float r = 0.0f;
-            for (char k = 0; k < 4; ++k) {
-                r += lhs.vals[MAT4(i, k)] * rhs.vals[MAT4(k, j)];
-            }
-
-            res.vals[MAT4(i, j)] = r;
-        }
-    }
-
-    return res;
-}
-
-struct Vector3 {
-    float x;
-    float y;
-    float z;
-};
-
-Vector3 operator+(Vector3 const &lhs, Vector3 const &rhs) {
-    return {lhs.x + rhs.x, lhs.y + rhs.y, lhs.z + rhs.z};
-}
-
-Vector3 operator-(Vector3 const &v) { return {-v.x, -v.y, -v.z}; }
-
-Vector3 operator-(Vector3 const &lhs, Vector3 const &rhs) {
-    return {lhs.x - rhs.x, lhs.y - rhs.y, lhs.z - rhs.z};
-}
-
-Vector3 operator*(float a, Vector3 const &v) {
-    return {a * v.x, a * v.y, a * v.z};
-}
-
-Vector3 cross(Vector3 const &lhs, Vector3 const &rhs) {
-    return {
-        lhs.y * rhs.z - lhs.z * rhs.y,
-        lhs.z * rhs.z - lhs.x * rhs.z,
-        lhs.x * rhs.y - lhs.y * rhs.x,
-    };
-}
-
-float dot(Vector3 const &lhs, Vector3 const &rhs) {
-    return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z;
-}
-
-float lengthSq(Vector3 v) { return dot(v, v); }
-
-Vector3 normalize(Vector3 v) {
-    Vector3 res = {};
-
-    float lenSq = lengthSq(v);
-    if (lenSq != 0) {
-        res = (1 / sqrtf(lenSq)) * v;
-    }
-
-    return res;
 }
 
 struct Vertex {
@@ -569,8 +465,8 @@ Vertex cube_vertices[] = {
 struct Cube {
     Vector3 position;
     Vector3 rotation;
-    Vector3 velocity;
-    Vector3 alpha;
+    Vector3 velocity; // dPosition
+    Vector3 omega;    // dRotation
 };
 
 struct Joint {
@@ -665,9 +561,9 @@ Slice<Cube> generateCubes() {
                 Cube &c = cubes[9 * x + 3 * y + z];
 
                 Vector3 position = {};
-                position.x = base + (side_len + padding) * x + RAD;
-                position.y = base + (side_len + padding) * y + RAD;
-                position.z = base + (side_len + padding) * z + RAD;
+                position.x() = base + (side_len + padding) * x + RAD;
+                position.y() = base + (side_len + padding) * y + RAD;
+                position.z() = base + (side_len + padding) * z + RAD;
 
                 c = {};
                 c.position = position;
@@ -1250,12 +1146,14 @@ int main() {
         for (int i = 0; i < DEBUG_INSTANCE_COUNT; ++i) {
             Joint const &j = joints[i];
 
-            // line_verts[2 * i + 0] = debugVertex({}, nullptr, {0, 1.0, 0});
-            // line_verts[2 * i + 1] =
-            //     debugVertex(j.cube->position, nullptr, {0, 0, 1.0});
-
+#if 0
+            line_verts[2 * i + 0] = debugVertex({}, nullptr, {0, 1.0, 0});
+            line_verts[2 * i + 1] =
+                debugVertex(j.cube->position, nullptr, {0, 0, 1.0});
+#else
             line_verts[2 * i + 0] = debugVertex({});
             line_verts[2 * i + 1] = debugVertex(j.cube_r, j.cube, {1.0, 0, 0});
+#endif
         }
 
         gl.bindBuffer(GL_ARRAY_BUFFER, dp.line_buf.handle);
@@ -1286,3 +1184,5 @@ int main() {
     glfwTerminate();
     return 0;
 }
+
+#include "math.cc"
