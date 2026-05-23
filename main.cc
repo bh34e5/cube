@@ -464,7 +464,7 @@ Vertex cube_vertices[] = {
 
 struct Cube {
     Vector3 position;
-    Vector3 rotation;
+    Quaternion rotation;
     Vector3 velocity; // dPosition
     Vector3 omega;    // dRotation
 };
@@ -567,6 +567,7 @@ Slice<Cube> generateCubes() {
 
                 c = {};
                 c.position = position;
+                c.rotation = {1, 0, 0, 0};
             }
         }
     }
@@ -762,8 +763,10 @@ void mainProgramSetAttributesAndInitialData(GL &gl, MainProgram &mp,
     gl.enableVertexAttribArray(mp.a_vert_position_attrib_pos);
     gl.enableVertexAttribArray(mp.a_vert_tex_coord_attrib_pos);
 
+    assert(sizeof(((Vertex *)0)->offset) == 3 * sizeof(float));
     gl.vertexAttribPointer(mp.a_vert_position_attrib_pos, 3, GL_FLOAT, GL_FALSE,
                            sizeof(Vertex), (void *)offsetof(Vertex, offset));
+    assert(sizeof(((Vertex *)0)->face_id) == 1 * sizeof(float));
     gl.vertexAttribPointer(mp.a_vert_tex_coord_attrib_pos, 1, GL_FLOAT,
                            GL_FALSE, sizeof(Vertex),
                            (void *)offsetof(Vertex, face_id));
@@ -777,9 +780,11 @@ void mainProgramSetAttributesAndInitialData(GL &gl, MainProgram &mp,
     gl.enableVertexAttribArray(mp.a_cube_offset_attrib_pos);
     gl.enableVertexAttribArray(mp.a_cube_rotation_attrib_pos);
 
+    assert(sizeof(((Cube *)0)->position) == 3 * sizeof(float));
     gl.vertexAttribPointer(mp.a_cube_offset_attrib_pos, 3, GL_FLOAT, GL_FALSE,
                            sizeof(Cube), (void *)offsetof(Cube, position));
-    gl.vertexAttribPointer(mp.a_cube_rotation_attrib_pos, 3, GL_FLOAT, GL_FALSE,
+    assert(sizeof(((Cube *)0)->rotation) == 4 * sizeof(float));
+    gl.vertexAttribPointer(mp.a_cube_rotation_attrib_pos, 4, GL_FLOAT, GL_FALSE,
                            sizeof(Cube), (void *)offsetof(Cube, rotation));
 
     gl.vertexAttribDivisor(mp.a_cube_offset_attrib_pos, 1);
@@ -863,7 +868,7 @@ void useDebugProgram(GL &gl, DebugProgram dp) {
 struct DebugVertex {
     Vector3 point;
     Vector3 offset;
-    Vector3 rotation;
+    Quaternion rotation;
     Vector3 color;
 };
 
@@ -891,15 +896,19 @@ void debugProgramSetAttributesAndInitialData(GL &gl, DebugProgram &dp) {
     gl.enableVertexAttribArray(dp.a_cube_rotation_attrib_pos);
     gl.enableVertexAttribArray(dp.a_color_attrib_pos);
 
+    assert(sizeof(((DebugVertex *)0)->point) == 3 * sizeof(float));
     gl.vertexAttribPointer(dp.a_vert_position_attrib_pos, 3, GL_FLOAT, GL_FALSE,
                            sizeof(DebugVertex),
                            (void *)offsetof(DebugVertex, point));
+    assert(sizeof(((DebugVertex *)0)->offset) == 3 * sizeof(float));
     gl.vertexAttribPointer(dp.a_cube_offset_attrib_pos, 3, GL_FLOAT, GL_FALSE,
                            sizeof(DebugVertex),
                            (void *)offsetof(DebugVertex, offset));
-    gl.vertexAttribPointer(dp.a_cube_rotation_attrib_pos, 3, GL_FLOAT, GL_FALSE,
+    assert(sizeof(((DebugVertex *)0)->rotation) == 4 * sizeof(float));
+    gl.vertexAttribPointer(dp.a_cube_rotation_attrib_pos, 4, GL_FLOAT, GL_FALSE,
                            sizeof(DebugVertex),
                            (void *)offsetof(DebugVertex, rotation));
+    assert(sizeof(((DebugVertex *)0)->color) == 3 * sizeof(float));
     gl.vertexAttribPointer(dp.a_color_attrib_pos, 3, GL_FLOAT, GL_FALSE,
                            sizeof(DebugVertex),
                            (void *)offsetof(DebugVertex, color));

@@ -104,7 +104,7 @@ Vector<N> operator*(Matrix<N, C> const &mat, Vector<C> const &v) {
 }
 
 template <unsigned int N> Vector<N> operator-(Vector<N> const &v) {
-    Vector<N> r;
+    Vector<N> r; // no clear because we are setting every value
 
     for (unsigned int n = 0; n < N; ++n) {
         r.vals[n] = -v.vals[n];
@@ -115,7 +115,7 @@ template <unsigned int N> Vector<N> operator-(Vector<N> const &v) {
 
 template <unsigned int N>
 Vector<N> operator+(Vector<N> const &lhs, Vector<N> const &rhs) {
-    Vector<N> r;
+    Vector<N> r; // no clear because we are setting every value
 
     for (unsigned int n = 0; n < N; ++n) {
         r.vals[n] = lhs.vals[n] + rhs.vals[n];
@@ -126,8 +126,7 @@ Vector<N> operator+(Vector<N> const &lhs, Vector<N> const &rhs) {
 
 template <unsigned int N>
 Vector<N> operator-(Vector<N> const &lhs, Vector<N> const &rhs) {
-
-    Vector<N> r;
+    Vector<N> r; // no clear because we are setting every value
 
     for (unsigned int n = 0; n < N; ++n) {
         r.vals[n] = lhs.vals[n] - rhs.vals[n];
@@ -137,7 +136,7 @@ Vector<N> operator-(Vector<N> const &lhs, Vector<N> const &rhs) {
 }
 
 template <unsigned int N> Vector<N> operator*(float a, Vector<N> const &v) {
-    Vector<N> r;
+    Vector<N> r; // no clear because we are setting every value
 
     for (unsigned int n = 0; n < N; ++n) {
         r.vals[n] = a * v.vals[n];
@@ -166,4 +165,63 @@ float dot(Vector<N> const &lhs, Vector<N> const &rhs) {
     }
 
     return r;
+}
+
+Quaternion operator-(Quaternion const &q) {
+    Quaternion r = {
+        -q.r,
+        -q.x,
+        -q.y,
+        -q.z,
+    };
+    return r;
+}
+
+Quaternion operator+(Quaternion const &lhs, Quaternion const &rhs) {
+    Quaternion q = {
+        lhs.r + rhs.r,
+        lhs.x + rhs.x,
+        lhs.y + rhs.y,
+        lhs.z + rhs.z,
+    };
+    return q;
+}
+
+Quaternion operator-(Quaternion const &lhs, Quaternion const &rhs) {
+    Quaternion q = {
+        lhs.r - rhs.r,
+        lhs.x - rhs.x,
+        lhs.y - rhs.y,
+        lhs.z - rhs.z,
+    };
+    return q;
+}
+
+Quaternion operator*(float a, Quaternion &q) {
+    Quaternion r = {
+        a * q.r,
+        a * q.x,
+        a * q.y,
+        a * q.z,
+    };
+    return r;
+}
+
+Quaternion operator*(Quaternion const &lhs, Quaternion const &rhs) {
+    float lr = lhs.r;
+    float rr = rhs.r;
+
+    Vector3 lv = lhs.vector();
+    Vector3 rv = rhs.vector();
+
+    float real = lr * rr - dot(lv, rv);
+    Vector3 vector = (lr * rv) + (rr * lv) + cross(lv, rv);
+
+    Quaternion result = {
+        real,
+        vector.x(),
+        vector.y(),
+        vector.z(),
+    };
+    return result;
 }

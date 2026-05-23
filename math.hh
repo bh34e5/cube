@@ -56,6 +56,20 @@ struct Vector<3> {
     }
 };
 
+struct Quaternion {
+    // real part
+    float r;
+    // vector part
+    float x;
+    float y;
+    float z;
+
+    Vector<3> vector() const {
+        Vector<3> v = {x,y,z};
+        return v;
+    }
+};
+
 #define MAT4(x, y) ((x) * 4 + (y))
 typedef Matrix<4, 4> Matrix4;
 typedef Vector<3> Vector3;
@@ -94,5 +108,11 @@ static inline Vector3 cross(Vector3 const &lhs, Vector3 const &rhs) {
         lhs.x() * rhs.y() - lhs.y() * rhs.x(),
     };
 }
+
+Quaternion operator-(Quaternion const &q);
+Quaternion operator+(Quaternion const &lhs, Quaternion const &rhs);
+Quaternion operator-(Quaternion const &lhs, Quaternion const &rhs);
+Quaternion operator*(float a, Quaternion &q);
+Quaternion operator*(Quaternion const &lhs, Quaternion const &rhs);
 
 #endif // MATH_hh
