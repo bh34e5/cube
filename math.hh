@@ -64,9 +64,14 @@ struct Quaternion {
     float y;
     float z;
 
-    Vector<3> vector() const {
+    inline Vector<3> vector() const {
         Vector<3> v = {x,y,z};
         return v;
+    }
+
+    inline Quaternion conj() const {
+        Quaternion c = {r,-x,-y,-z};
+        return c;
     }
 };
 
@@ -78,6 +83,7 @@ Matrix4 identityMatrix4();
 Matrix4 xAxisRotation(float theta);
 Matrix4 yAxisRotation(float theta);
 Matrix4 zAxisRotation(float theta);
+Matrix4 quaternionRotation(Quaternion q);
 Matrix4 translationMatr(Vector3 offset);
 
 template <unsigned int R, unsigned int K, unsigned int C>

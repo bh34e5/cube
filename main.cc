@@ -475,6 +475,21 @@ struct Joint {
     float len;
 };
 
+Vector3 mapCubePoint(Cube const &cube, Vector3 point) {
+    Matrix4 rot = quaternionRotation(cube.rotation);
+    Matrix4 tx = translationMatr(cube.position);
+
+    Vector<4> world = tx * rot * point.hom();
+    assert(world.vals[3] == 1.0);
+
+    Vector3 res = {
+        world.vals[0],
+        world.vals[1],
+        world.vals[2],
+    };
+    return res;
+}
+
 Vector3 triangleIntersection(Vector3 unit_ray, Vector3 a, Vector3 b, Vector3 c,
                              bool *found) {
     Vector3 intersection = {};
@@ -560,10 +575,11 @@ Slice<Cube> generateCubes() {
             for (int z = 0; z < side_count; ++z) {
                 Cube &c = cubes[9 * x + 3 * y + z];
 
-                Vector3 position = {};
-                position.x() = base + (side_len + padding) * x + RAD;
-                position.y() = base + (side_len + padding) * y + RAD;
-                position.z() = base + (side_len + padding) * z + RAD;
+                Vector3 position = {
+                    base + (side_len + padding) * x + RAD,
+                    base + (side_len + padding) * y + RAD,
+                    base + (side_len + padding) * z + RAD,
+                };
 
                 c = {};
                 c.position = position;
@@ -660,6 +676,98 @@ GLubyte *generateCubeTexture() {
     }
 
     return vals;
+}
+
+struct Collision {
+    Cube *a;
+    Cube *b;
+    Vector3 ra;
+    Vector3 rb;
+    float depth;
+    float sum_lambda;
+};
+
+void checkCollisions(DList<Collision> &collisions, Cube &a, Cube &b) {
+    // TODO(bhester): check collisions
+    Collision c = {&a, &b, {}, {}, 0.0, 0.0};
+    collisions.push(c);
+}
+
+void preStepCollision(Collision &collision) {
+    // TODO(bhester): pre step. should technically do nothing right now?
+}
+
+void stepCollision(Collision &collision, double inv_dt) {
+    // TODO(bhester): step collision
+}
+
+void stepJointPosition(Joint &joint, double inv_dt) {}
+
+void stepJointRotation(Joint &joint, double inv_dt) {
+    Vector3 normal_tether_dir = normalize(joint.cube->position);
+    Vector3 point_in_space_dir =
+        normalize(mapCubePoint(*joint.cube, joint.cube_r));
+
+    float cos_between = dot(normal_tether_dir, point_in_space_dir);
+    float angle = acos(cos_between);
+}
+
+void stepJoint(Joint &joint, double inv_dt) {
+    stepJointPosition(joint, inv_dt);
+    stepJointRotation(joint, inv_dt);
+}
+
+Quaternion quatExp(Vector3 omega, double delta_time_seconds) {
+    float theta = sqrtf(lengthSq((float)delta_time_seconds * omega));
+    float half_theta = theta / 2.0;
+
+    float c = cosf(half_theta);
+    float s = sinf(half_theta);
+
+    Quaternion r = {
+        c,
+        s * omega.x(),
+        s * omega.y(),
+        s * omega.z(),
+    };
+    return r;
+}
+
+#define NUM_ITERATIONS 10
+void runPhysics(DList<Collision> &collisions, Slice<Cube> cubes,
+                Slice<Joint> joints, double delta_time_seconds) {
+    double inv_dt = delta_time_seconds > 0.0 ? 1.0 / delta_time_seconds : 0.0;
+
+    collisions.ensureSize(cubes.len * 4); // TODO(bhester): tune
+    collisions.clearRetainCapacity();
+
+    for (unsigned int i = 0; i < cubes.len; ++i) {
+        for (unsigned int j = i + 1; j < cubes.len; ++j) {
+            Cube &a = cubes[i];
+            Cube &b = cubes[j];
+
+            checkCollisions(collisions, a, b);
+        }
+    }
+
+    for (Collision &collision : collisions.items()) {
+        preStepCollision(collision);
+    }
+
+    for (int i = 0; i < NUM_ITERATIONS; ++i) {
+        for (Collision &collision : collisions.items()) {
+            stepCollision(collision, inv_dt);
+        }
+
+        for (Joint &joint : joints) {
+            stepJoint(joint, inv_dt);
+        }
+    }
+
+    for (Cube &cube : cubes) {
+        cube.position = cube.position + delta_time_seconds * cube.velocity;
+        cube.rotation = quatExp(cube.omega, delta_time_seconds) * cube.rotation;
+    }
 }
 
 struct MainProgram {
@@ -927,6 +1035,7 @@ int main() {
     GLFWwindow *window = {};
     Context context = {};
 
+    DList<Collision> collisions = {};
     Slice<Cube> cubes = generateCubes();
     DList<Joint> joints = generateJoints(cubes);
     GLubyte *color_tex_data = generateCubeTexture();
@@ -1164,6 +1273,14 @@ int main() {
         cubes[0].velocity.z() += cube_x_vel * delta_time_seconds;
         cubes[0].velocity.y() += cube_y_vel * delta_time_seconds;
 
+        // handle physics
+
+        runPhysics(collisions, cubes, joints.items(), delta_time_seconds);
+
+        gl.bindBuffer(GL_ARRAY_BUFFER, mp.cube_state_buf.handle);
+        gl.bufferData(GL_ARRAY_BUFFER, INSTANCE_COUNT * sizeof(Cube),
+                      (void *)cubes.dat, GL_STATIC_DRAW);
+
         // render
 
         gl.clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -1216,6 +1333,7 @@ int main() {
     free(color_tex_data);
     joints.erase();
     free(cubes.dat);
+    collisions.erase();
 
     glfwTerminate();
     return 0;

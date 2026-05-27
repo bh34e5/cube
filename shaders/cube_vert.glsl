@@ -16,6 +16,8 @@ out float f_layer;
 mat4 rotFromQuaternion(vec4 q);
 mat4 translationMat(vec3 translation);
 
+// TODO(bhester): look into maybe using Rodrigues' rotation formula
+
 void main() {
   mat4 rot = rotFromQuaternion(a_cube_rotation);
   mat4 tx = translationMat(a_cube_offset);

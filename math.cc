@@ -51,6 +51,28 @@ Matrix4 zAxisRotation(float theta) {
     return mat;
 }
 
+Matrix4 quaternionRotation(Quaternion q) {
+    float r00 = 1 - 2 * (q.y * q.y + q.z * q.z);
+    float r01 = 2 * (q.x * q.y - q.z * q.r);
+    float r02 = 2 * (q.x * q.z + q.y * q.r);
+
+    float r10 = 2 * (q.x * q.y + q.z * q.r);
+    float r11 = 1 - 2 * (q.x * q.x + q.z * q.z);
+    float r12 = 2 * (q.y * q.z - q.x * q.r);
+
+    float r20 = 2 * (q.x * q.z - q.y * q.r);
+    float r21 = 2 * (q.y * q.z + q.x * q.r);
+    float r22 = 1 - 2 * (q.x * q.x + q.y * q.y);
+
+    Matrix4 res = {
+        r00, r01, r02, 0, //
+        r10, r11, r12, 0, //
+        r20, r21, r22, 0, //
+        0,   0,   0,   1, //
+    };
+    return res;
+}
+
 Matrix4 translationMatr(Vector3 offset) {
     Matrix4 mat = identityMatrix4();
 
